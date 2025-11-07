@@ -1,0 +1,35 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/src/avs/include/**",
+                "/opt/ros/jazzy/include/**",
+                "/opt/ros/jazzy/include/gps_msgs",
+                "/usr/include/**",
+                "/usr/local/include/**",
+                "/usr/include/opencv4",
+                "/usr/include/eigen3",
+                "/usr/include/yaml-cpp",
+                "/usr/include/pcl-1.14",
+                "/usr/include/boost",
+                "/usr/local/include/laszip"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/src/avs/include/**",
+                    "/opt/ros/jazzy/include/**",
+                    "/usr/include"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            },
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-arm64"
+        }
+    ],
+    "version": 4
+}

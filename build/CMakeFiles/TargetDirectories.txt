@@ -1,4 +1,0 @@
-/root/aes/build/CMakeFiles/encrypt_frames.dir
-/root/aes/build/CMakeFiles/decrypt_frames.dir
-/root/aes/build/CMakeFiles/edit_cache.dir
-/root/aes/build/CMakeFiles/rebuild_cache.dir
