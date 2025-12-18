@@ -1,0 +1,77 @@
+{
+  "frame_id": "000034",
+  "policy_id": "full_anonymization",
+  "objects": [
+    {
+      "class": "person",
+      "confidence": 0.644,
+      "bbox": [
+        625,
+        164,
+        702,
+        320
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "car",
+      "confidence": 0.534,
+      "bbox": [
+        369,
+        167,
+        463,
+        249
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "motorcycle",
+      "confidence": 0.509,
+      "bbox": [
+        977,
+        185,
+        1109,
+        264
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "truck",
+      "confidence": 0.338,
+      "bbox": [
+        369,
+        163,
+        464,
+        247
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.28,
+      "bbox": [
+        534,
+        185,
+        564,
+        201
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    }
+  ],
+  "summary": {
+    "detections": 5,
+    "kept": 0,
+    "anonymized": 5,
+    "removed": 0
+  },
+  "timing": {
+    "detection_ms": 23.58,
+    "anonymization_ms": 0.3,
+    "total_ms": 23.88
+  }
+}

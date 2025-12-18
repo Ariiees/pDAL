@@ -1,0 +1,149 @@
+{
+  "frame_id": "000117",
+  "policy_id": "full_anonymization",
+  "objects": [
+    {
+      "class": "car",
+      "confidence": 0.765,
+      "bbox": [
+        799,
+        187,
+        904,
+        255
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.726,
+      "bbox": [
+        699,
+        180,
+        746,
+        221
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.571,
+      "bbox": [
+        761,
+        180,
+        799,
+        271
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "car",
+      "confidence": 0.562,
+      "bbox": [
+        608,
+        172,
+        658,
+        216
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.454,
+      "bbox": [
+        656,
+        181,
+        699,
+        210
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.379,
+      "bbox": [
+        496,
+        174,
+        552,
+        225
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.357,
+      "bbox": [
+        673,
+        182,
+        702,
+        212
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.338,
+      "bbox": [
+        748,
+        182,
+        807,
+        259
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "person",
+      "confidence": 0.319,
+      "bbox": [
+        130,
+        164,
+        167,
+        239
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "car",
+      "confidence": 0.281,
+      "bbox": [
+        736,
+        189,
+        769,
+        235
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.252,
+      "bbox": [
+        652,
+        180,
+        678,
+        210
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    }
+  ],
+  "summary": {
+    "detections": 11,
+    "kept": 0,
+    "anonymized": 11,
+    "removed": 0
+  },
+  "timing": {
+    "detection_ms": 18.9,
+    "anonymization_ms": 0.29,
+    "total_ms": 19.19
+  }
+}

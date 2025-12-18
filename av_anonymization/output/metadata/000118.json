@@ -1,0 +1,125 @@
+{
+  "frame_id": "000118",
+  "policy_id": "full_anonymization",
+  "objects": [
+    {
+      "class": "car",
+      "confidence": 0.852,
+      "bbox": [
+        790,
+        190,
+        897,
+        257
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.635,
+      "bbox": [
+        0,
+        241,
+        135,
+        312
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.584,
+      "bbox": [
+        750,
+        184,
+        792,
+        281
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "car",
+      "confidence": 0.556,
+      "bbox": [
+        685,
+        180,
+        736,
+        223
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.517,
+      "bbox": [
+        594,
+        172,
+        640,
+        216
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.413,
+      "bbox": [
+        480,
+        176,
+        537,
+        225
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.339,
+      "bbox": [
+        657,
+        183,
+        690,
+        214
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.321,
+      "bbox": [
+        641,
+        182,
+        669,
+        210
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.26,
+      "bbox": [
+        649,
+        181,
+        687,
+        215
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    }
+  ],
+  "summary": {
+    "detections": 9,
+    "kept": 0,
+    "anonymized": 9,
+    "removed": 0
+  },
+  "timing": {
+    "detection_ms": 24.34,
+    "anonymization_ms": 0.33,
+    "total_ms": 24.67
+  }
+}

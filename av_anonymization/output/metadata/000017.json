@@ -1,0 +1,101 @@
+{
+  "frame_id": "000017",
+  "policy_id": "full_anonymization",
+  "objects": [
+    {
+      "class": "bicycle",
+      "confidence": 0.857,
+      "bbox": [
+        1022,
+        185,
+        1152,
+        262
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.846,
+      "bbox": [
+        781,
+        172,
+        880,
+        335
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "bicycle",
+      "confidence": 0.793,
+      "bbox": [
+        785,
+        255,
+        887,
+        371
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.53,
+      "bbox": [
+        282,
+        155,
+        410,
+        259
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "bicycle",
+      "confidence": 0.478,
+      "bbox": [
+        727,
+        193,
+        776,
+        234
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.457,
+      "bbox": [
+        207,
+        184,
+        255,
+        213
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.329,
+      "bbox": [
+        475,
+        165,
+        537,
+        206
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    }
+  ],
+  "summary": {
+    "detections": 9,
+    "kept": 0,
+    "anonymized": 7,
+    "removed": 2
+  },
+  "timing": {
+    "detection_ms": 32.2,
+    "anonymization_ms": 0.38,
+    "total_ms": 32.57
+  }
+}

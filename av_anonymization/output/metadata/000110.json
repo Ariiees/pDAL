@@ -1,0 +1,137 @@
+{
+  "frame_id": "000110",
+  "policy_id": "full_anonymization",
+  "objects": [
+    {
+      "class": "truck",
+      "confidence": 0.89,
+      "bbox": [
+        1012,
+        117,
+        1241,
+        367
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.758,
+      "bbox": [
+        865,
+        184,
+        962,
+        244
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.753,
+      "bbox": [
+        712,
+        172,
+        760,
+        217
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.653,
+      "bbox": [
+        599,
+        179,
+        653,
+        226
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.595,
+      "bbox": [
+        812,
+        181,
+        850,
+        275
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "car",
+      "confidence": 0.362,
+      "bbox": [
+        787,
+        180,
+        826,
+        219
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.311,
+      "bbox": [
+        763,
+        183,
+        793,
+        215
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.293,
+      "bbox": [
+        692,
+        174,
+        714,
+        192
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.267,
+      "bbox": [
+        651,
+        176,
+        668,
+        192
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.254,
+      "bbox": [
+        229,
+        210,
+        279,
+        253
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    }
+  ],
+  "summary": {
+    "detections": 10,
+    "kept": 0,
+    "anonymized": 10,
+    "removed": 0
+  },
+  "timing": {
+    "detection_ms": 22.88,
+    "anonymization_ms": 0.42,
+    "total_ms": 23.29
+  }
+}

@@ -1,0 +1,161 @@
+{
+  "frame_id": "000127",
+  "policy_id": "full_anonymization",
+  "objects": [
+    {
+      "class": "car",
+      "confidence": 0.884,
+      "bbox": [
+        716,
+        186,
+        845,
+        282
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.626,
+      "bbox": [
+        632,
+        186,
+        724,
+        255
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.625,
+      "bbox": [
+        327,
+        178,
+        391,
+        230
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.571,
+      "bbox": [
+        454,
+        170,
+        497,
+        211
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.452,
+      "bbox": [
+        536,
+        181,
+        574,
+        221
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.394,
+      "bbox": [
+        511,
+        179,
+        530,
+        208
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.37,
+      "bbox": [
+        565,
+        179,
+        624,
+        228
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.335,
+      "bbox": [
+        403,
+        173,
+        421,
+        195
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.329,
+      "bbox": [
+        277,
+        185,
+        379,
+        251
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.296,
+      "bbox": [
+        503,
+        178,
+        533,
+        207
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.275,
+      "bbox": [
+        519,
+        180,
+        559,
+        213
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.262,
+      "bbox": [
+        305,
+        183,
+        380,
+        241
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    }
+  ],
+  "summary": {
+    "detections": 12,
+    "kept": 0,
+    "anonymized": 12,
+    "removed": 0
+  },
+  "timing": {
+    "detection_ms": 23.86,
+    "anonymization_ms": 0.45,
+    "total_ms": 24.31
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "frame_id": "000104",
+  "policy_id": "full_anonymization",
+  "objects": [
+    {
+      "class": "truck",
+      "confidence": 0.778,
+      "bbox": [
+        962,
+        108,
+        1241,
+        370
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.669,
+      "bbox": [
+        164,
+        160,
+        233,
+        340
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "person",
+      "confidence": 0.643,
+      "bbox": [
+        829,
+        182,
+        878,
+        271
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "car",
+      "confidence": 0.613,
+      "bbox": [
+        905,
+        188,
+        965,
+        228
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.563,
+      "bbox": [
+        941,
+        190,
+        972,
+        239
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.519,
+      "bbox": [
+        790,
+        175,
+        815,
+        191
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.497,
+      "bbox": [
+        877,
+        182,
+        922,
+        218
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.475,
+      "bbox": [
+        812,
+        173,
+        858,
+        218
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.43,
+      "bbox": [
+        701,
+        178,
+        750,
+        221
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.373,
+      "bbox": [
+        9,
+        115,
+        49,
+        256
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "person",
+      "confidence": 0.324,
+      "bbox": [
+        165,
+        160,
+        230,
+        282
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    }
+  ],
+  "summary": {
+    "detections": 11,
+    "kept": 0,
+    "anonymized": 11,
+    "removed": 0
+  },
+  "timing": {
+    "detection_ms": 24.58,
+    "anonymization_ms": 0.49,
+    "total_ms": 25.07
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "frame_id": "000075",
+  "policy_id": "full_anonymization",
+  "objects": [
+    {
+      "class": "car",
+      "confidence": 0.685,
+      "bbox": [
+        1094,
+        160,
+        1205,
+        242
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.672,
+      "bbox": [
+        990,
+        166,
+        1047,
+        306
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "car",
+      "confidence": 0.632,
+      "bbox": [
+        1170,
+        156,
+        1241,
+        280
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.539,
+      "bbox": [
+        839,
+        169,
+        862,
+        239
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "person",
+      "confidence": 0.392,
+      "bbox": [
+        815,
+        170,
+        840,
+        237
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "person",
+      "confidence": 0.34,
+      "bbox": [
+        154,
+        206,
+        181,
+        267
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "bicycle",
+      "confidence": 0.329,
+      "bbox": [
+        173,
+        209,
+        249,
+        269
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.327,
+      "bbox": [
+        844,
+        170,
+        868,
+        245
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "motorcycle",
+      "confidence": 0.299,
+      "bbox": [
+        173,
+        209,
+        248,
+        268
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.295,
+      "bbox": [
+        1015,
+        167,
+        1048,
+        284
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    }
+  ],
+  "summary": {
+    "detections": 10,
+    "kept": 0,
+    "anonymized": 10,
+    "removed": 0
+  },
+  "timing": {
+    "detection_ms": 31.62,
+    "anonymization_ms": 0.35,
+    "total_ms": 31.97
+  }
+}

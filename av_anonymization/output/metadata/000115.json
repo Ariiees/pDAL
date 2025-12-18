@@ -1,0 +1,149 @@
+{
+  "frame_id": "000115",
+  "policy_id": "full_anonymization",
+  "objects": [
+    {
+      "class": "car",
+      "confidence": 0.807,
+      "bbox": [
+        0,
+        185,
+        198,
+        299
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.713,
+      "bbox": [
+        636,
+        171,
+        685,
+        212
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.693,
+      "bbox": [
+        816,
+        186,
+        915,
+        248
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.621,
+      "bbox": [
+        723,
+        179,
+        772,
+        219
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.546,
+      "bbox": [
+        771,
+        179,
+        825,
+        277
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    },
+    {
+      "class": "car",
+      "confidence": 0.526,
+      "bbox": [
+        528,
+        175,
+        578,
+        220
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.516,
+      "bbox": [
+        691,
+        180,
+        725,
+        212
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.364,
+      "bbox": [
+        521,
+        188,
+        575,
+        228
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.268,
+      "bbox": [
+        619,
+        171,
+        643,
+        188
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "car",
+      "confidence": 0.266,
+      "bbox": [
+        524,
+        180,
+        580,
+        231
+      ],
+      "status": "anonymized",
+      "method": "pixelate"
+    },
+    {
+      "class": "person",
+      "confidence": 0.256,
+      "bbox": [
+        1227,
+        237,
+        1241,
+        375
+      ],
+      "status": "anonymized",
+      "method": "blackout"
+    }
+  ],
+  "summary": {
+    "detections": 11,
+    "kept": 0,
+    "anonymized": 11,
+    "removed": 0
+  },
+  "timing": {
+    "detection_ms": 27.55,
+    "anonymization_ms": 0.46,
+    "total_ms": 28.01
+  }
+}

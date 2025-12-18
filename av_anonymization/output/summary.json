@@ -1,0 +1,16 @@
+{
+  "policy_id": "full_anonymization",
+  "description": "Anonymize all detected objects for maximum privacy",
+  "statistics": {
+    "frames_processed": 154,
+    "total_detections": 1390,
+    "total_anonymized": 1362,
+    "total_removed": 28,
+    "timing": {
+      "avg_detection_ms": 28.66,
+      "avg_anonymization_ms": 0.42,
+      "avg_total_ms": 29.08
+    },
+    "fps": 34.39
+  }
+}
