@@ -4,21 +4,19 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "${workspaceFolder}/src/avs/include/**",
+                "${workspaceFolder}/src/avs/include",
+                "${workspaceFolder}/src/pacc/include",
                 "/opt/ros/jazzy/include/**",
-                "/opt/ros/jazzy/include/gps_msgs",
                 "/usr/include/**",
                 "/usr/local/include/**",
                 "/usr/include/opencv4",
                 "/usr/include/eigen3",
-                "/usr/include/yaml-cpp",
-                "/usr/include/pcl-1.14",
-                "/usr/include/boost",
-                "/usr/local/include/laszip"
+                "/usr/include/yaml-cpp"
             ],
             "browse": {
                 "path": [
-                    "${workspaceFolder}/src/avs/include/**",
+                    "${workspaceFolder}/src/avs/include",
+                    "${workspaceFolder}/src/pacc/include",
                     "/opt/ros/jazzy/include/**",
                     "/usr/include"
                 ],

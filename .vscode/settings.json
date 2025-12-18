@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "/home/avs/AVS-PI/src/avs",
+    "cmake.sourceDirectory": "/home/avs/PaCC",
     "files.associations": {
         "cctype": "cpp",
         "clocale": "cpp",
