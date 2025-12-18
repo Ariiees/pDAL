@@ -1,4 +1,4 @@
-#include "pacc/AESGCMEncryptor.h"
+#include "pacc/encrypto.h"
 
 #include <openssl/evp.h>
 #include <openssl/rand.h>

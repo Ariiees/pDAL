@@ -1,5 +1,5 @@
 #include "avs/img_dedup.h"
-#include "common.h"
+#include "avs/common.h"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <cv_bridge/cv_bridge.hpp>
@@ -46,7 +46,7 @@ void ImgDeduplicator::loadConfig(const std::string& config_path)
     write_params_ = {cv::IMWRITE_JPEG_QUALITY, 95};
   }
 
-  std::cout << "[VideoCompressor] Loaded config: image formace = " << img_format_
+  std::cout << "[VideoCompressor] Loaded config: image format = " << img_format_
             << ", image quality = " << img_quality_ << "\n";
 }
 
@@ -104,6 +104,30 @@ bool ImgDeduplicator::isUniqueAndStore(const sensor_msgs::msg::Image& img_msg, c
     first_image_ = false;
     return true;
   }
+  return false;
+}
+
+bool ImgDeduplicator::isUniqueAndGetBytes(const sensor_msgs::msg::Image& img_msg,
+                                          std::vector<uint8_t>& out_bytes)
+{
+  // One cv::Mat conversion
+  cv::Mat img = rosImgToCvMat(img_msg);
+
+  // One pHash
+  auto hash = computePhash(img);
+
+  // Dedup check
+  if (first_image_ || hammingDistance(last_hash_, hash) > hamming_threshold_)
+  {
+    // Encode to bytes for append logger
+    cv::imencode("." + img_format_, img, out_bytes, write_params_);
+
+    last_hash_ = hash;
+    first_image_ = false;
+    return true;
+  }
+
+  out_bytes.clear();
   return false;
 }
 

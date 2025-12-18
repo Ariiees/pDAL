@@ -1,0 +1,5 @@
+"/camera/image_raw":
+  sensor_type: image
+  folder_name: camera_front
+
+# Add more topics as needed
