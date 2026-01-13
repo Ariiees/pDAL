@@ -1,0 +1,6 @@
+openvino==2025.4.0
+pip==25.3
+pycryptodome==3.23.0
+setuptools==80.9.0
+ultralytics==8.3.235
+wheel==0.45.1

@@ -3,4 +3,5 @@ torchvision
 opencv-python>=4.8.0
 numpy>=1.24.0
 ultralytics>=8.0.0
-#openvino>=2023.0.0
+openvino==2025.4.0
+pycryptodome==3.23.0
