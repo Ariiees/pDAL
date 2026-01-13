@@ -1,5 +1,6 @@
 # Build Work Space Under PaCC/
 ```
+./ubuntu_setup.sh
 colcon build --symlink-install
 source install/setup.bash
 ```
