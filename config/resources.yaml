@@ -1,0 +1,39 @@
+resources:
+  vehicle.camera.front:
+    resource_type: sensor-data
+    semantic_name: Front-facing camera
+    modality: image
+    backend: avs
+    source: /my_camera/pylon_ros2_camera_node/image_raw
+    representations:
+      - format: jpeg
+        content_type: image/jpeg
+        stored: true
+    attributes:
+      orientation: front
+
+  vehicle.lidar.top:
+    resource_type: sensor-data
+    semantic_name: Roof LiDAR point cloud
+    modality: lidar
+    backend: avs
+    source: /sensing/lidar/top/pointcloud
+    representations:
+      - format: laz
+        content_type: application/vnd.laszip
+        stored: true
+    attributes:
+      position: roof
+
+  vehicle.position:
+    resource_type: sensor-data
+    semantic_name: Vehicle position
+    modality: gps
+    backend: avs
+    source: /novatel/oem7/gps
+    representations:
+      - format: avs-gps-binary
+        content_type: application/vnd.avs.gps
+        stored: true
+    attributes:
+      coordinate_system: WGS84

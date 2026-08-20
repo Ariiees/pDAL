@@ -1,0 +1,18 @@
+resource_catalog: resources.yaml
+policy: policy.yaml
+audit_log: /tmp/pdal-audit.jsonl
+
+# Development-only key used to authenticate opaque continuation tokens.
+# Production deployment should inject and rotate a protected secret.
+continuation_secret: change-this-development-secret
+
+storage:
+  ssd_root: /home/avs/DATA/SSD
+  hdd_root: /home/avs/DATA/HDD
+
+server:
+  address: 127.0.0.1
+  port: 8080
+  max_body_bytes: 1048576
+  max_connections: 8
+  demo_html: ../web/index.html
