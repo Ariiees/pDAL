@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OEM Vehicle History · pDAL</title>
+  <link rel="preconnect" href="https://tile.openstreetmap.org">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+    {"imports":{"three":"https://unpkg.com/three@0.180.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.180.0/examples/jsm/"}}
+  </script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">P</div>
+        <div><strong>pDAL</strong><span>OEM HISTORY CONSOLE</span></div>
+      </div>
+      <div class="system-state">
+        <span class="pulse"></span>
+        <span id="connectionLabel">Connecting to vehicle…</span>
+        <span class="divider"></span>
+        <span>PI 128.175.213.254</span>
+      </div>
+      <label class="role-control">
+        <span>AUTHORIZED VIEW</span>
+        <select id="roleSelect" aria-label="OEM role"></select>
+      </label>
+    </header>
+
+    <aside class="sidebar">
+      <div class="section-heading">
+        <div><span class="eyebrow">ONBOARD CATALOG</span><h1>Recordings</h1></div>
+        <span class="count-pill" id="tripCount">—</span>
+      </div>
+      <p class="sidebar-note">Metadata first. Select an existing recording, then inspect time visually.</p>
+      <div id="tripList" class="trip-list" aria-live="polite"></div>
+      <div class="policy-card">
+        <div class="policy-icon">✓</div>
+        <div><span>POLICY PATH</span><strong>AVS → pDAL → OEM</strong><small id="policyVersion">Waiting for policy decision</small></div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <section class="context-bar">
+        <div>
+          <span class="eyebrow">SELECTED RECORDING</span>
+          <h2 id="tripTitle">Choose a recording</h2>
+        </div>
+        <div class="context-stat"><span>WINDOW</span><strong id="tripWindow">—</strong></div>
+        <div class="context-stat"><span>SELECTED T</span><strong id="selectedTime">—</strong></div>
+        <button id="denialButton" class="proof-button">Run policy denial proof</button>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel map-panel">
+          <div class="panel-head">
+            <div><span class="modality-dot gps"></span><span class="eyebrow">GPS · AUTHORIZED TRAJECTORY</span><h3>Vehicle route</h3></div>
+            <div class="metric-inline"><span>GPS Δt</span><strong id="gpsDelta">—</strong></div>
+          </div>
+          <div id="map" class="map"></div>
+          <div class="map-overlay"><span>Click any retained route point</span><strong id="gpsPosition">—</strong><small id="gpsTimestamp">GPS timestamp —</small></div>
+        </article>
+
+        <div class="sensor-column">
+          <article id="cameraPanel" class="panel sensor-panel">
+            <div class="panel-head">
+              <div><span class="modality-dot camera"></span><span class="eyebrow">FRONT CAMERA · RETAINED JPEG</span><h3>Closest frame</h3></div>
+              <span id="cameraState" class="access-chip">WAITING</span>
+            </div>
+            <div class="media-stage camera-stage">
+              <img id="cameraImage" alt="Closest retained AVS front-camera frame">
+              <div class="camera-controls" aria-label="Camera image zoom controls">
+                <button id="cameraZoomOut" type="button" title="Zoom out">−</button>
+                <button id="cameraZoomReset" type="button" title="Fit full image"><span id="cameraZoomLabel">FIT</span></button>
+                <button id="cameraZoomIn" type="button" title="Zoom in">+</button>
+                <button id="cameraExpand" type="button" title="Show the complete frame full screen" aria-label="Show complete camera frame full screen">⛶</button>
+              </div>
+              <div id="cameraEmpty" class="empty-state"><span class="empty-icon">▧</span><strong>No frame selected</strong><small>Move through the timeline</small></div>
+            </div>
+            <div class="sensor-readout">
+              <div><span>REQUESTED T</span><strong id="cameraRequested">—</strong></div>
+              <div><span>CAMERA TIME</span><strong id="cameraTimestamp">—</strong></div>
+              <div><span>Δt</span><strong id="cameraDelta">—</strong></div>
+            </div>
+            <p class="truth-note">AVS retains deduplicated JPEG frames. This is not continuous video.</p>
+            <div id="cameraLock" class="lock-overlay"><span>LOCKED</span><strong>Camera not authorized</strong><small>pDAL denies this role at the data boundary.</small></div>
+          </article>
+
+          <article id="lidarPanel" class="panel sensor-panel">
+            <div class="panel-head">
+              <div><span class="modality-dot lidar"></span><span class="eyebrow">LIDAR · AVS DOWNSAMPLED LAZ</span><h3>3D point-cloud snapshot</h3></div>
+              <span id="lidarState" class="access-chip">WAITING</span>
+            </div>
+            <div id="lidarCanvas" class="media-stage lidar-stage">
+              <div id="lidarEmpty" class="empty-state"><span class="empty-icon">⌁</span><strong>No snapshot selected</strong><small>Drag to rotate · scroll to zoom</small></div>
+            </div>
+            <div class="sensor-readout">
+              <div><span>REQUESTED T</span><strong id="lidarRequested">—</strong></div>
+              <div><span>LIDAR TIME</span><strong id="lidarTimestamp">—</strong></div>
+              <div><span>Δt</span><strong id="lidarDelta">—</strong></div>
+            </div>
+            <p class="truth-note">One timestamp-oriented point cloud decoded and rendered on this host.</p>
+            <div id="lidarLock" class="lock-overlay"><span>LOCKED</span><strong>LiDAR not authorized</strong><small>pDAL denies this role at the data boundary.</small></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel timeline-panel">
+        <div class="timeline-head">
+          <div><span class="eyebrow">MULTI-MODALITY TIMELINE</span><h3>Timestamp-oriented history inspector</h3></div>
+          <span id="timelineHint">Click or drag to change T</span>
+        </div>
+        <canvas id="timeline" height="150"></canvas>
+      </section>
+
+      <section class="telemetry-strip">
+        <div class="bandwidth-title"><span class="eyebrow">SELECTIVE TRANSFER</span><strong>Bandwidth evidence</strong><small>Measured response-body bytes across the Pi → host link</small></div>
+        <div class="bandwidth-stat"><span>ONBOARD CANDIDATE</span><strong id="candidateBytes">—</strong></div>
+        <div class="bandwidth-arrow">→</div>
+        <div class="bandwidth-stat accent"><span>NETWORK TRANSFERRED</span><strong id="networkBytes">0 B</strong></div>
+        <div class="bandwidth-stat"><span>RECORDS RETURNED</span><strong id="recordsReturned">0</strong></div>
+        <div class="reduction"><span id="reductionValue">—</span><small>BANDWIDTH AVOIDED</small></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="denialModal" class="modal" aria-hidden="true">
+    <div class="modal-card">
+      <button id="closeModal" class="modal-close" aria-label="Close">×</button>
+      <span class="denial-badge">pDAL POLICY DECISION</span>
+      <h2>Request denied onboard</h2>
+      <p id="denialSummary">The protected query was rejected before any sensor payload was read.</p>
+      <pre id="denialDetails"></pre>
+      <button id="modalDone" class="proof-button">Done</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

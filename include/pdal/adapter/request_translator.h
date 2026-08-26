@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "pdal/model/types.h"
+#include "pdal/model/data.h"
 
 namespace pdal {
 
@@ -26,6 +27,9 @@ class NativeHttpAdapter final : public RequestTranslator {
   PdalRequest ToCanonicalRequest(
       const boost::json::value& external,
       const ExternalHeaders& headers = {}) const override;
+  DataQuery ToDataQuery(const boost::json::value& external,
+                        Operation operation,
+                        const ExternalHeaders& headers = {}) const;
 };
 
 class SovdAdapter final : public RequestTranslator {
@@ -33,11 +37,15 @@ class SovdAdapter final : public RequestTranslator {
   PdalRequest ToCanonicalRequest(
       const boost::json::value& external,
       const ExternalHeaders& headers = {}) const override;
+  DataQuery ToDataQuery(const boost::json::value& external,
+                        const ExternalHeaders& headers = {}) const;
 };
 
 class LocalCliAdapter {
  public:
   PdalRequest ToCanonicalRequest(const std::vector<std::string>& arguments) const;
+  DataQuery ToDataQuery(const std::vector<std::string>& arguments,
+                        Operation operation = Operation::kHistory) const;
 };
 
 void ValidateRequest(const PdalRequest& request);

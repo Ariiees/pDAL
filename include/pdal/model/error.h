@@ -9,11 +9,16 @@ namespace pdal {
 
 enum class ErrorClass {
   kInvalidRequest,
+  kInvalidQuery,
   kUnauthenticated,
   kForbidden,
   kResourceNotFound,
   kRepresentationNotSupported,
   kRangeNotSatisfiable,
+  kNoData,
+  kNotSupported,
+  kQueryTooLarge,
+  kPartialRead,
   kBackendUnavailable,
   kInternalError,
 };

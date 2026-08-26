@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-project(pdal VERSION 0.1.0 LANGUAGES CXX)
+project(pdal VERSION 0.1.0 LANGUAGES C CXX)
 
-option(PDAL_WITH_AVS "Build the AVS hot-tier storage adapter" ON)
+option(PDAL_WITH_AVS "Build the unified AVS historical storage adapter" ON)
+option(PDAL_WITH_ROS_LIVE "Build the ROS 2 live-data source when dependencies are available" ON)
+option(PDAL_BUILD_BENCHMARKS "Build pDAL performance benchmarks" ON)
 set(PDAL_AVS_SOURCE_ROOT "/home/avs/AVS-PI/src/avs" CACHE PATH
     "Path to the AVS ROS package source tree")
 
@@ -19,14 +21,18 @@ add_library(pdal_core
   src/model/types.cpp
   src/model/error.cpp
   src/model/json.cpp
+  src/model/data.cpp
   src/catalog/resource_catalog.cpp
   src/policy/policy_engine.cpp
   src/planner/query_planner.cpp
   src/storage/storage_backend.cpp
+  src/live/live_data_source.cpp
   src/representation/representation_provider.cpp
   src/adapter/request_translator.cpp
   src/audit/audit.cpp
   src/pipeline.cpp
+  src/query_engine.cpp
+  src/sdk/client.cpp
 )
 target_include_directories(pdal_core PUBLIC include)
 target_link_libraries(pdal_core
@@ -43,6 +49,7 @@ if(PDAL_WITH_AVS)
   add_library(pdal_avs_backend
     src/storage/avs_storage_backend.cpp
     "${PDAL_AVS_SOURCE_ROOT}/src/retrieve/retrieve_api.cpp"
+    "${PDAL_AVS_SOURCE_ROOT}/src/retrieve/historical_retrieve_api.cpp"
   )
   target_include_directories(pdal_avs_backend
     PUBLIC include
@@ -50,6 +57,61 @@ if(PDAL_WITH_AVS)
   )
   target_link_libraries(pdal_avs_backend PUBLIC pdal_core SQLite::SQLite3)
   target_compile_options(pdal_avs_backend PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(PDAL_BUILD_BENCHMARKS AND PDAL_WITH_AVS)
+  add_executable(pdal_avs_benchmark benchmarks/pdal_avs_benchmark.cpp)
+  target_include_directories(pdal_avs_benchmark PRIVATE
+    "${PDAL_AVS_SOURCE_ROOT}/include")
+  target_link_libraries(pdal_avs_benchmark PRIVATE pdal_avs_backend)
+  target_compile_options(pdal_avs_benchmark PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+set(PDAL_ROS_LIVE_AVAILABLE OFF)
+if(PDAL_WITH_ROS_LIVE)
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  find_package(ament_cmake QUIET)
+  find_package(rclcpp QUIET)
+  find_package(sensor_msgs QUIET)
+  find_package(gps_msgs QUIET)
+  find_package(cv_bridge QUIET)
+  find_package(pcl_conversions QUIET)
+  find_package(OpenCV QUIET COMPONENTS core imgcodecs)
+  find_package(PCL QUIET COMPONENTS common)
+  find_path(LASZIP_INCLUDE_DIR NAMES laszip_api.h PATH_SUFFIXES laszip)
+  find_library(LASZIP_LIBRARY NAMES laszip)
+  if(ament_cmake_FOUND AND rclcpp_FOUND AND sensor_msgs_FOUND AND
+     gps_msgs_FOUND AND cv_bridge_FOUND AND pcl_conversions_FOUND AND
+     OpenCV_FOUND AND PCL_FOUND AND LASZIP_INCLUDE_DIR AND LASZIP_LIBRARY)
+    add_library(pdal_ros_live
+      src/live/ros_live_data_source.cpp
+      "${PDAL_AVS_SOURCE_ROOT}/src/process/lidar_compress.cpp"
+    )
+    target_include_directories(pdal_ros_live
+      PUBLIC include
+      PRIVATE
+        "${PDAL_AVS_SOURCE_ROOT}/include"
+        ${OpenCV_INCLUDE_DIRS}
+        ${PCL_INCLUDE_DIRS}
+        ${LASZIP_INCLUDE_DIR}
+    )
+    ament_target_dependencies(pdal_ros_live
+      rclcpp sensor_msgs gps_msgs cv_bridge pcl_conversions)
+    target_link_libraries(pdal_ros_live
+      pdal_core ${OpenCV_LIBS} ${PCL_LIBRARIES} ${LASZIP_LIBRARY} yaml-cpp)
+    target_compile_options(pdal_ros_live PRIVATE -Wall -Wextra -Wpedantic)
+    if(PDAL_BUILD_BENCHMARKS)
+      add_executable(pdal_ros_live_benchmark
+        benchmarks/pdal_ros_live_benchmark.cpp)
+      target_link_libraries(pdal_ros_live_benchmark
+        pdal_ros_live pdal_core)
+      target_compile_options(pdal_ros_live_benchmark PRIVATE
+        -Wall -Wextra -Wpedantic)
+    endif()
+    set(PDAL_ROS_LIVE_AVAILABLE ON)
+  else()
+    message(WARNING "ROS live dependencies were not found; building pDAL without RosLiveDataSource")
+  endif()
 endif()
 
 add_library(pdal_http src/transport/http_server.cpp)
@@ -63,6 +125,10 @@ if(PDAL_WITH_AVS)
   target_link_libraries(pdal PRIVATE pdal_avs_backend)
   target_compile_definitions(pdal PRIVATE PDAL_WITH_AVS=1)
 endif()
+if(PDAL_ROS_LIVE_AVAILABLE)
+  target_link_libraries(pdal PRIVATE pdal_ros_live)
+  target_compile_definitions(pdal PRIVATE PDAL_WITH_ROS_LIVE=1)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
@@ -72,6 +138,15 @@ if(BUILD_TESTING)
   add_test(NAME pdal_tests COMMAND pdal_tests)
   set_tests_properties(pdal_tests PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+  if(PDAL_WITH_AVS)
+    add_executable(pdal_avs_backend_tests tests/avs_backend_tests.cpp)
+    target_include_directories(pdal_avs_backend_tests PRIVATE
+      "${PDAL_AVS_SOURCE_ROOT}/include")
+    target_link_libraries(pdal_avs_backend_tests PRIVATE pdal_avs_backend)
+    target_compile_options(pdal_avs_backend_tests PRIVATE
+      -Wall -Wextra -Wpedantic)
+    add_test(NAME pdal_avs_backend_tests COMMAND pdal_avs_backend_tests)
+  endif()
 endif()
 
 install(TARGETS pdal RUNTIME DESTINATION bin)

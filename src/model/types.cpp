@@ -65,4 +65,40 @@ std::string PlanOperationName(PlanOperation operation) {
   return "Unknown";
 }
 
+std::string ResourceKindName(ResourceKind kind) {
+  switch (kind) {
+    case ResourceKind::kSignal: return "SIGNAL";
+    case ResourceKind::kStream: return "STREAM";
+    case ResourceKind::kObject: return "OBJECT";
+  }
+  return "STREAM";
+}
+
+std::string OperationName(Operation operation) {
+  switch (operation) {
+    case Operation::kDiscover: return "DISCOVER";
+    case Operation::kDescribe: return "DESCRIBE";
+    case Operation::kHistory: return "HISTORY";
+    case Operation::kLatest: return "LATEST";
+    case Operation::kSubscribe: return "SUBSCRIBE";
+  }
+  return "HISTORY";
+}
+
+ResourceKind ParseResourceKind(const std::string& value) {
+  if (value == "SIGNAL" || value == "signal") return ResourceKind::kSignal;
+  if (value == "OBJECT" || value == "object") return ResourceKind::kObject;
+  if (value == "STREAM" || value == "stream") return ResourceKind::kStream;
+  throw std::invalid_argument("unknown resource kind: " + value);
+}
+
+Operation ParseOperation(const std::string& value) {
+  if (value == "DISCOVER" || value == "discover") return Operation::kDiscover;
+  if (value == "DESCRIBE" || value == "describe") return Operation::kDescribe;
+  if (value == "HISTORY" || value == "history") return Operation::kHistory;
+  if (value == "LATEST" || value == "latest") return Operation::kLatest;
+  if (value == "SUBSCRIBE" || value == "subscribe") return Operation::kSubscribe;
+  throw std::invalid_argument("unknown operation: " + value);
+}
+
 }  // namespace pdal

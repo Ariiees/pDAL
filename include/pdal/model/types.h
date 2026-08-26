@@ -74,15 +74,26 @@ struct AvailableTimeRange {
   std::optional<std::uint64_t> end_ns;
 };
 
+enum class ResourceKind { kSignal, kStream, kObject };
+
+enum class Operation { kDiscover, kDescribe, kHistory, kLatest, kSubscribe };
+
+struct SemanticReference {
+  std::string model;
+  std::string path;
+};
+
+struct ResourceLimits {
+  std::uint64_t max_history_range_ns = 0;
+  std::uint64_t max_records = 0;
+  std::uint64_t max_bytes = 0;
+  std::uint64_t stream_buffer_bytes = 0;
+};
+
 struct RepresentationDescriptor {
   std::string format;
   std::string content_type;
   bool stored = true;
-};
-
-struct BackendBinding {
-  std::string backend_id;
-  std::string source;
 };
 
 struct ResourceDescriptor {
@@ -93,7 +104,14 @@ struct ResourceDescriptor {
   AvailableTimeRange available_time_range;
   std::vector<RepresentationDescriptor> representations;
   std::unordered_map<std::string, std::string> attributes;
-  BackendBinding binding;
+  ResourceKind kind = ResourceKind::kStream;
+  std::string description;
+  std::string schema;
+  std::vector<SemanticReference> semantic_references;
+  std::vector<Operation> operations;
+  ResourceLimits limits;
+  bool historical_available = false;
+  bool live_available = false;
 };
 
 struct AccessLimits {
@@ -195,5 +213,9 @@ std::uint64_t SystemNowNs();
 std::string GenerateRequestId();
 std::string DeliveryModeName(DeliveryMode mode);
 std::string PlanOperationName(PlanOperation operation);
+std::string ResourceKindName(ResourceKind kind);
+std::string OperationName(Operation operation);
+ResourceKind ParseResourceKind(const std::string& value);
+Operation ParseOperation(const std::string& value);
 
 }  // namespace pdal

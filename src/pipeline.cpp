@@ -230,6 +230,9 @@ PreparedQuery PdalPipeline::Prepare(PdalRequest request) const {
   const auto started_at_ns = SystemNowNs();
   const auto usage_start = CurrentUsage();
   ValidateRequest(request);
+  for (auto& resource : request.resources) {
+    resource = catalog_.CanonicalId(resource);
+  }
   if (!registry_->Begin(
           {request.request_id, RequestState::kReceived, 0, 0, {}})) {
     throw PdalError(ErrorClass::kInvalidRequest,
@@ -257,6 +260,16 @@ PreparedQuery PdalPipeline::Prepare(PdalRequest request) const {
                              {{"task_count", plan.tasks.size()},
                               {"latency_ms", ElapsedMs(planning_started)}}));
 
+    std::uint64_t offset = 0;
+    if (request.delivery.continuation_token) {
+      offset = continuation_.DecodeAndValidate(*request.delivery.continuation_token,
+                                               request);
+      if (offset > 1000000) {
+        throw PdalError(ErrorClass::kQueryTooLarge,
+                        "continuation offset exceeds the bounded scan limit");
+      }
+    }
+
     ResponseMetadata metadata;
     metadata.request_id = request.request_id;
     metadata.policy_version = access.policy_version();
@@ -275,6 +288,8 @@ PreparedQuery PdalPipeline::Prepare(PdalRequest request) const {
 
     std::vector<BackendRecord> all_records;
     std::uint64_t records_considered = 0;
+    bool backend_has_more = false;
+    const bool single_resource = plan.tasks.size() == 1;
     for (const auto& task : plan.tasks) {
       const auto& descriptor = catalog_.Get(task.resource_id);
       const auto& backend = backends_->Get(task.backend_id);
@@ -283,11 +298,21 @@ PreparedQuery PdalPipeline::Prepare(PdalRequest request) const {
                                {{"resource_id", task.resource_id},
                                 {"backend", task.backend_id}}));
       const auto query_started = std::chrono::steady_clock::now();
-      auto records = backend.Query(task, catalog_);
-      records_considered += records.size();
+      const auto task_offset = single_resource ? offset : 0;
+      const auto lookahead = plan.limits.max_records + 1;
+      const auto task_limit = single_resource
+                                  ? lookahead
+                                  : std::min<std::uint64_t>(
+                                        100000, lookahead + offset);
+      auto cursor = backend.OpenHistory({task, task_offset, task_limit}, catalog_);
+      std::vector<BackendRecord> records;
+      while (auto record = cursor->Next()) records.push_back(std::move(*record));
+      records_considered += cursor->records_considered();
+      backend_has_more = backend_has_more || cursor->has_more();
       audit_->Write(AuditEvent("records_selected", request.request_id,
                                {{"resource_id", task.resource_id},
-                                {"records_considered", records.size()},
+                                {"records_considered", cursor->records_considered()},
+                                {"records_selected", records.size()},
                                 {"backend_query_latency_ms", ElapsedMs(query_started)}}));
 
       std::uint64_t last_selected_ts = 0;
@@ -312,13 +337,10 @@ PreparedQuery PdalPipeline::Prepare(PdalRequest request) const {
       return left.resource_id < right.resource_id;
     });
 
-    std::uint64_t offset = 0;
-    if (request.delivery.continuation_token) {
-      offset = continuation_.DecodeAndValidate(*request.delivery.continuation_token, request);
-      if (offset > all_records.size()) {
+    const std::uint64_t page_offset = single_resource ? 0 : offset;
+    if (!single_resource && page_offset > all_records.size()) {
         throw PdalError(ErrorClass::kInvalidRequest,
                         "continuation offset is beyond the current result set");
-      }
     }
     PlannedResult result;
     result.plan = plan;
@@ -326,7 +348,7 @@ PreparedQuery PdalPipeline::Prepare(PdalRequest request) const {
     const bool metadata_only = request.delivery.mode == DeliveryMode::kMetadata ||
                                request.representation.format == "metadata" ||
                                request.representation.format == "metadata-only";
-    std::size_t cursor = static_cast<std::size_t>(offset);
+    std::size_t cursor = static_cast<std::size_t>(page_offset);
     while (cursor < all_records.size() &&
            result.records.size() < plan.limits.max_records) {
       const auto& candidate = all_records[cursor];
@@ -343,11 +365,11 @@ PreparedQuery PdalPipeline::Prepare(PdalRequest request) const {
                       {{"record_size", all_records[cursor].payload_size},
                        {"max_bytes", plan.limits.max_bytes}});
     }
-    if (cursor < all_records.size()) {
+    if (cursor < all_records.size() || backend_has_more) {
       constexpr std::uint64_t kContinuationTtlNs =
           15ULL * 60ULL * 1000ULL * 1000ULL * 1000ULL;
       result.continuation_token = continuation_.Encode(
-          request, cursor,
+          request, offset + result.records.size(),
           std::min<std::uint64_t>(access.expires_at_ns(),
                                   SystemNowNs() + kContinuationTtlNs));
     }
@@ -399,7 +421,7 @@ std::uint64_t PdalPipeline::Stream(const PreparedQuery& prepared,
           return true;
         });
         if (read != record.payload_size) {
-          throw PdalError(ErrorClass::kBackendUnavailable,
+          throw PdalError(ErrorClass::kPartialRead,
                           "backend returned an incomplete record");
         }
         const auto existing = tier_bytes.if_contains(record.storage_tier);
@@ -457,14 +479,6 @@ boost::json::object PdalPipeline::CapabilitiesJson() const {
   boost::json::array delivery_modes{"stream", "metadata"};
   boost::json::array query_features{"inclusive_time_range", "multi_resource",
                                      "sampling", "continuation"};
-  boost::json::array backends;
-  for (const auto& capability : backends_->Capabilities()) {
-    backends.emplace_back(boost::json::object{
-        {"backend", capability.backend_id},
-        {"hot_tier", capability.supports_hot_tier},
-        {"cold_tier", capability.supports_cold_tier},
-        {"streaming", capability.supports_streaming}});
-  }
   return {{"api_version", kApiVersion},
           {"resources", std::move(resources)},
           {"query_features", std::move(query_features)},
@@ -472,7 +486,8 @@ boost::json::object PdalPipeline::CapabilitiesJson() const {
           {"limits", boost::json::object{{"max_resources", 16},
                                           {"max_records", 100000},
                                           {"max_bytes", 1073741824}}},
-          {"backends", std::move(backends)},
+          {"historical_data", boost::json::object{{"available", true},
+                                                    {"streaming", true}}},
           {"extensions", boost::json::object{{"sovd_style_bulk_data", "experimental"}}}};
 }
 

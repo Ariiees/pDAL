@@ -58,12 +58,33 @@ boost::json::object ResourceToJson(const ResourceDescriptor& resource) {
   } else {
     available["end_ns"] = nullptr;
   }
+  boost::json::array semantic_references;
+  for (const auto& reference : resource.semantic_references) {
+    semantic_references.emplace_back(boost::json::object{
+        {"model", reference.model}, {"path", reference.path}});
+  }
+  boost::json::array operations;
+  for (const auto operation : resource.operations) {
+    operations.emplace_back(OperationName(operation));
+  }
   return {{"resource_id", resource.resource_id},
+          {"kind", ResourceKindName(resource.kind)},
           {"resource_type", resource.resource_type},
-          {"semantic_name", resource.semantic_name},
+          {"display_name", resource.semantic_name},
+          {"description", resource.description},
+          {"schema", resource.schema},
           {"modality", resource.modality},
+          {"semantic_references", std::move(semantic_references)},
+          {"operations", std::move(operations)},
           {"available_time_range", std::move(available)},
+          {"historical_available", resource.historical_available},
+          {"live_available", resource.live_available},
           {"representations", std::move(representations)},
+          {"limits", boost::json::object{
+                         {"max_history_range_ns", resource.limits.max_history_range_ns},
+                         {"max_records", resource.limits.max_records},
+                         {"max_bytes", resource.limits.max_bytes},
+                         {"stream_buffer_bytes", resource.limits.stream_buffer_bytes}}},
           {"attributes", std::move(attributes)}};
 }
 
@@ -115,7 +136,6 @@ boost::json::object ExecutionPlanToJson(const ExecutionPlan& plan) {
   boost::json::array tasks;
   for (const auto& task : plan.tasks) {
     tasks.emplace_back(boost::json::object{{"resource_id", task.resource_id},
-                                           {"backend", task.backend_id},
                                            {"time", TimeToJson(task.time)},
                                            {"representation",
                                             RepresentationToJson(task.representation)}});

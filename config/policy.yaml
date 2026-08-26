@@ -11,7 +11,7 @@ roles:
     max_bytes: 268435456
 
   viewer:
-    resources: [vehicle.camera.front, vehicle.position]
+    resources: [camera.front, position]
     purposes: [diagnostics, development]
     transformations: []
     max_time_span_ns: 30000000000

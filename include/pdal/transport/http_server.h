@@ -6,6 +6,7 @@
 #include <string>
 
 #include "pdal/pipeline.h"
+#include "pdal/query_engine.h"
 
 namespace pdal {
 
@@ -19,12 +20,14 @@ struct HttpServerConfig {
 
 class HttpServer {
  public:
-  HttpServer(HttpServerConfig config, std::shared_ptr<const PdalPipeline> pipeline);
+  HttpServer(HttpServerConfig config, std::shared_ptr<const PdalPipeline> pipeline,
+             std::shared_ptr<const QueryEngine> query_engine);
   void Run();
 
  private:
   HttpServerConfig config_;
   std::shared_ptr<const PdalPipeline> pipeline_;
+  std::shared_ptr<const QueryEngine> query_engine_;
 };
 
 }  // namespace pdal

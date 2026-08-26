@@ -17,7 +17,8 @@ ExecutionPlan QueryPlanner::Plan(const AuthorizedAccessPlan& access_plan,
                      PlanOperation::kStreamResult};
   for (const auto& authorized : access_plan.resources()) {
     const auto& descriptor = catalog.Get(authorized.resource_id);
-    plan.tasks.push_back({authorized.resource_id, descriptor.binding.backend_id,
+    plan.tasks.push_back({authorized.resource_id,
+                          descriptor.historical_binding.backend_id,
                           authorized.time, authorized.representation});
   }
   return plan;

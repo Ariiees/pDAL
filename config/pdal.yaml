@@ -10,6 +10,11 @@ storage:
   ssd_root: /home/avs/DATA/SSD
   hdd_root: /home/avs/DATA/HDD
 
+runtime:
+  max_concurrent_bulk_queries: 2
+  max_live_subscriptions: 8
+  live_queue_bytes: 8388608
+
 server:
   address: 127.0.0.1
   port: 8080

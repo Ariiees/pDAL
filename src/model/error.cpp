@@ -13,11 +13,16 @@ PdalError::PdalError(ErrorClass error_class, std::string message,
 std::string ErrorClassName(ErrorClass error_class) {
   switch (error_class) {
     case ErrorClass::kInvalidRequest: return "invalid_request";
+    case ErrorClass::kInvalidQuery: return "invalid_query";
     case ErrorClass::kUnauthenticated: return "unauthenticated";
     case ErrorClass::kForbidden: return "forbidden";
     case ErrorClass::kResourceNotFound: return "resource_not_found";
     case ErrorClass::kRepresentationNotSupported: return "representation_not_supported";
     case ErrorClass::kRangeNotSatisfiable: return "range_not_satisfiable";
+    case ErrorClass::kNoData: return "no_data";
+    case ErrorClass::kNotSupported: return "not_supported";
+    case ErrorClass::kQueryTooLarge: return "query_too_large";
+    case ErrorClass::kPartialRead: return "partial_read";
     case ErrorClass::kBackendUnavailable: return "backend_unavailable";
     case ErrorClass::kInternalError: return "internal_error";
   }
@@ -27,12 +32,17 @@ std::string ErrorClassName(ErrorClass error_class) {
 std::string ErrorCode(ErrorClass error_class) {
   switch (error_class) {
     case ErrorClass::kInvalidRequest: return "PDAL_INVALID_REQUEST";
+    case ErrorClass::kInvalidQuery: return "PDAL_INVALID_QUERY";
     case ErrorClass::kUnauthenticated: return "PDAL_UNAUTHENTICATED";
     case ErrorClass::kForbidden: return "PDAL_FORBIDDEN";
     case ErrorClass::kResourceNotFound: return "PDAL_RESOURCE_NOT_FOUND";
     case ErrorClass::kRepresentationNotSupported:
       return "PDAL_REPRESENTATION_NOT_SUPPORTED";
     case ErrorClass::kRangeNotSatisfiable: return "PDAL_RANGE_NOT_SATISFIABLE";
+    case ErrorClass::kNoData: return "PDAL_NO_DATA";
+    case ErrorClass::kNotSupported: return "PDAL_NOT_SUPPORTED";
+    case ErrorClass::kQueryTooLarge: return "PDAL_QUERY_TOO_LARGE";
+    case ErrorClass::kPartialRead: return "PDAL_PARTIAL_READ";
     case ErrorClass::kBackendUnavailable: return "PDAL_BACKEND_UNAVAILABLE";
     case ErrorClass::kInternalError: return "PDAL_INTERNAL_ERROR";
   }
@@ -42,11 +52,16 @@ std::string ErrorCode(ErrorClass error_class) {
 int HttpStatus(ErrorClass error_class) {
   switch (error_class) {
     case ErrorClass::kInvalidRequest: return 400;
+    case ErrorClass::kInvalidQuery: return 400;
     case ErrorClass::kUnauthenticated: return 401;
     case ErrorClass::kForbidden: return 403;
     case ErrorClass::kResourceNotFound: return 404;
     case ErrorClass::kRepresentationNotSupported: return 406;
     case ErrorClass::kRangeNotSatisfiable: return 416;
+    case ErrorClass::kNoData: return 404;
+    case ErrorClass::kNotSupported: return 501;
+    case ErrorClass::kQueryTooLarge: return 413;
+    case ErrorClass::kPartialRead: return 502;
     case ErrorClass::kBackendUnavailable: return 503;
     case ErrorClass::kInternalError: return 500;
   }

@@ -17,8 +17,13 @@
 #include "pdal/model/error.h"
 #include "pdal/model/json.h"
 #include "pdal/pipeline.h"
+#include "pdal/query_engine.h"
+#include "pdal/security/hooks.h"
 #ifdef PDAL_WITH_AVS
 #include "pdal/storage/avs_storage_backend.h"
+#endif
+#ifdef PDAL_WITH_ROS_LIVE
+#include "pdal/live/ros_live_data_source.h"
 #endif
 #include "pdal/transport/http_server.h"
 
@@ -28,8 +33,12 @@ struct AppConfig {
   std::filesystem::path resources;
   std::filesystem::path policy;
   std::filesystem::path ssd_root;
+  std::filesystem::path hdd_root;
   std::filesystem::path audit_log;
   std::string continuation_secret;
+  std::size_t max_concurrent_bulk_queries = 2;
+  std::size_t max_live_subscriptions = 8;
+  std::size_t live_queue_bytes = 8 * 1024 * 1024;
   pdal::HttpServerConfig http;
 };
 
@@ -46,8 +55,16 @@ AppConfig LoadConfig(const std::filesystem::path& path) {
   config.resources = ResolvePath(base, root["resource_catalog"].as<std::string>());
   config.policy = ResolvePath(base, root["policy"].as<std::string>());
   config.ssd_root = root["storage"]["ssd_root"].as<std::string>("/home/avs/DATA/SSD");
+  config.hdd_root = root["storage"]["hdd_root"].as<std::string>("/home/avs/DATA/HDD");
   config.audit_log = root["audit_log"].as<std::string>("/tmp/pdal-audit.jsonl");
   config.continuation_secret = root["continuation_secret"].as<std::string>();
+  const auto runtime = root["runtime"];
+  config.max_concurrent_bulk_queries =
+      runtime["max_concurrent_bulk_queries"].as<std::size_t>(2);
+  config.max_live_subscriptions =
+      runtime["max_live_subscriptions"].as<std::size_t>(8);
+  config.live_queue_bytes =
+      runtime["live_queue_bytes"].as<std::size_t>(8 * 1024 * 1024);
   const auto server = root["server"];
   config.http.address = server["address"].as<std::string>("127.0.0.1");
   config.http.port = server["port"].as<std::uint16_t>(8080);
@@ -57,21 +74,39 @@ AppConfig LoadConfig(const std::filesystem::path& path) {
   return config;
 }
 
-std::shared_ptr<pdal::PdalPipeline> BuildPipeline(const AppConfig& config) {
+struct Runtime {
+  std::shared_ptr<pdal::PdalPipeline> pipeline;
+  std::shared_ptr<pdal::QueryEngine> query_engine;
+};
+
+Runtime BuildRuntime(const AppConfig& config) {
+  auto catalog = pdal::ResourceCatalog::LoadYaml(config.resources);
   auto backends = std::make_shared<pdal::BackendRegistry>();
 #ifdef PDAL_WITH_AVS
-  backends->Register(std::make_shared<pdal::AvsStorageBackend>(config.ssd_root));
+  backends->Register(std::make_shared<pdal::AvsStorageBackend>(
+      config.ssd_root, config.hdd_root));
 #else
   throw std::runtime_error("this build does not include the AVS backend");
 #endif
-  return std::make_shared<pdal::PdalPipeline>(
-      pdal::ResourceCatalog::LoadYaml(config.resources),
+  auto live_sources = std::make_shared<pdal::LiveSourceRegistry>();
+#ifdef PDAL_WITH_ROS_LIVE
+  live_sources->Register(std::make_shared<pdal::RosLiveDataSource>(
+      catalog, config.max_live_subscriptions, config.live_queue_bytes));
+#endif
+  auto audit = std::make_shared<pdal::JsonLinesAuditSink>(config.audit_log);
+  auto pipeline = std::make_shared<pdal::PdalPipeline>(
+      catalog,
       std::make_shared<pdal::YamlPolicyEngine>(
           pdal::YamlPolicyEngine::Load(config.policy)),
-      std::move(backends),
-      std::make_shared<pdal::JsonLinesAuditSink>(config.audit_log),
+      backends, audit,
       pdal::ContinuationCodec(config.continuation_secret),
       std::make_shared<pdal::RequestRegistry>());
+  auto query_engine = std::make_shared<pdal::QueryEngine>(
+      std::move(catalog), backends, live_sources,
+      std::make_shared<pdal::PassThroughPolicy>(),
+      std::make_shared<pdal::NoOpPrivacy>(), audit,
+      config.max_concurrent_bulk_queries);
+  return {std::move(pipeline), std::move(query_engine)};
 }
 
 void PutBigEndian(std::uint8_t* output, std::uint64_t value, std::size_t bytes) {
@@ -151,14 +186,14 @@ int main(int argc, char** argv) {
       }
     }
     const auto config = LoadConfig(config_path);
-    const auto pipeline = BuildPipeline(config);
+    const auto runtime = BuildRuntime(config);
     if (command == "serve") {
       std::cerr << "pDAL listening on " << config.http.address << ':'
                 << config.http.port << '\n';
-      pdal::HttpServer(config.http, pipeline).Run();
+      pdal::HttpServer(config.http, runtime.pipeline, runtime.query_engine).Run();
       return 0;
     }
-    if (command == "query") return RunQuery(pipeline, arguments);
+    if (command == "query") return RunQuery(runtime.pipeline, arguments);
     Usage();
     return 2;
   } catch (const pdal::PdalError& error) {

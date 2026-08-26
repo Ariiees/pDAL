@@ -1,39 +1,98 @@
 resources:
-  vehicle.camera.front:
+  camera.front:
+    aliases: [vehicle.camera.front]
+    kind: STREAM
     resource_type: sensor-data
-    semantic_name: Front-facing camera
+    display_name: Front-facing camera
+    description: Time-ordered front camera frames.
+    schema: pdal.image.v1
     modality: image
-    backend: avs
-    source: /my_camera/pylon_ros2_camera_node/image_raw
+    semantic_references: []
+    operations: [DESCRIBE, HISTORY, LATEST, SUBSCRIBE]
+    historical_binding:
+      backend: avs
+      source: /my_camera/pylon_ros2_camera_node/image_raw
+      options:
+        topic_folder: camera_front
+    live_binding:
+      source_type: ros
+      source: /my_camera/pylon_ros2_camera_node/image_raw
+      options:
+        message_type: sensor_msgs/msg/Image
     representations:
       - format: jpeg
         content_type: image/jpeg
         stored: true
+    limits:
+      max_history_range_ns: 300000000000
+      max_records: 1000
+      max_bytes: 268435456
+      stream_buffer_bytes: 8388608
     attributes:
       orientation: front
 
-  vehicle.lidar.top:
+  lidar.top:
+    aliases: [vehicle.lidar.top]
+    kind: STREAM
     resource_type: sensor-data
-    semantic_name: Roof LiDAR point cloud
+    display_name: Roof LiDAR point cloud
+    description: Time-ordered roof-mounted LiDAR point-cloud samples.
+    schema: pdal.pointcloud.v1
     modality: lidar
-    backend: avs
-    source: /sensing/lidar/top/pointcloud
+    semantic_references: []
+    operations: [DESCRIBE, HISTORY, LATEST, SUBSCRIBE]
+    historical_binding:
+      backend: avs
+      source: /sensing/lidar/top/pointcloud
+      options:
+        topic_folder: lidar_top
+    live_binding:
+      source_type: ros
+      source: /sensing/lidar/top/pointcloud
+      options:
+        message_type: sensor_msgs/msg/PointCloud2
     representations:
       - format: laz
         content_type: application/vnd.laszip
         stored: true
+    limits:
+      max_history_range_ns: 300000000000
+      max_records: 1000
+      max_bytes: 268435456
+      stream_buffer_bytes: 16777216
     attributes:
       position: roof
 
-  vehicle.position:
+  position:
+    aliases: [vehicle.position]
+    kind: STREAM
     resource_type: sensor-data
-    semantic_name: Vehicle position
+    display_name: Vehicle position
+    description: Time-ordered WGS 84 vehicle position samples.
+    schema: pdal.position.v1
     modality: gps
-    backend: avs
-    source: /novatel/oem7/gps
+    semantic_references:
+      - model: EPSG
+        path: "4326"
+    operations: [DESCRIBE, HISTORY, LATEST, SUBSCRIBE]
+    historical_binding:
+      backend: avs
+      source: /novatel/oem7/gps
+      options:
+        topic_folder: gps_right
+    live_binding:
+      source_type: ros
+      source: /novatel/oem7/gps
+      options:
+        message_type: gps_msgs/msg/GPSFix
     representations:
-      - format: avs-gps-binary
-        content_type: application/vnd.avs.gps
+      - format: position-binary-v1
+        content_type: application/vnd.pdal.position-v1
         stored: true
+    limits:
+      max_history_range_ns: 300000000000
+      max_records: 1000
+      max_bytes: 67108864
+      stream_buffer_bytes: 1048576
     attributes:
       coordinate_system: WGS84

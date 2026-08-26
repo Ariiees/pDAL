@@ -8,10 +8,12 @@
 #include <boost/json/array.hpp>
 #include <boost/json/parse.hpp>
 #include <boost/json/serialize.hpp>
+#include <boost/system/system_error.hpp>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -85,6 +87,18 @@ std::string ContentTypeFor(const PdalPipeline& pipeline,
   return "application/octet-stream";
 }
 
+boost::json::object SampleMetadata(const DataSample& sample) {
+  boost::json::object metadata{{"resource_id", sample.resource_id},
+                               {"timestamp_ns", sample.timestamp_ns},
+                               {"representation", sample.representation},
+                               {"content_type", sample.content_type}};
+  for (const auto& [key, value] : sample.metadata) metadata[key] = value;
+  if (!metadata.contains("payload_size")) {
+    metadata["payload_size"] = sample.payload ? sample.payload->size() : 0;
+  }
+  return metadata;
+}
+
 void PutBigEndian(std::uint8_t* output, std::uint64_t value, std::size_t bytes) {
   for (std::size_t i = 0; i < bytes; ++i) {
     output[bytes - i - 1] = static_cast<std::uint8_t>(value & 0xffU);
@@ -145,6 +159,49 @@ void WriteStream(tcp::socket& socket, unsigned version,
   if (connected) asio::write(socket, http::make_chunk_last(), error);
 }
 
+void WriteDataStream(tcp::socket& socket, unsigned version,
+                     DataResult result) {
+  http::response<http::empty_body> response{http::status::ok, version};
+  response.set(http::field::server, "pdal/1");
+  response.set(http::field::content_type,
+               "application/vnd.pdal.record-stream; version=1");
+  response.set("X-PDAL-Request-ID", result.request_id);
+  response.set("X-PDAL-Resource-ID", result.resource_id);
+  response.set("X-PDAL-Operation", OperationName(result.operation));
+  response.chunked(true);
+  response.keep_alive(false);
+  http::response_serializer<http::empty_body> serializer{response};
+  beast::error_code error;
+  http::write_header(socket, serializer, error);
+  if (error) {
+    result.stream.Cancel();
+    return;
+  }
+
+  static constexpr char magic[] = "PDALSTR1";
+  bool connected = WriteChunk(socket, magic, sizeof(magic) - 1);
+  try {
+    while (connected) {
+      auto sample = result.stream.Next();
+      if (!sample) break;
+      const auto metadata = boost::json::serialize(SampleMetadata(*sample));
+      const auto payload_size = sample->payload ? sample->payload->size() : 0;
+      std::array<std::uint8_t, 12> header{};
+      PutBigEndian(header.data(), metadata.size(), 4);
+      PutBigEndian(header.data() + 4, payload_size, 8);
+      connected = WriteChunk(socket, header.data(), header.size()) &&
+                  WriteChunk(socket, metadata.data(), metadata.size());
+      if (connected && payload_size > 0) {
+        connected = WriteChunk(socket, sample->payload->data(), payload_size);
+      }
+    }
+  } catch (const std::exception&) {
+    connected = false;
+  }
+  result.stream.Cancel();
+  if (connected) asio::write(socket, http::make_chunk_last(), error);
+}
+
 boost::json::object MetadataBody(const PreparedQuery& prepared) {
   auto body = ResponseMetadataToJson(prepared.metadata);
   boost::json::array records;
@@ -158,7 +215,8 @@ boost::json::object MetadataBody(const PreparedQuery& prepared) {
 }
 
 void HandleSession(tcp::socket socket, const HttpServerConfig& config,
-                   const std::shared_ptr<const PdalPipeline>& pipeline) {
+                   const std::shared_ptr<const PdalPipeline>& pipeline,
+                   const std::shared_ptr<const QueryEngine>& query_engine) {
   beast::flat_buffer buffer;
   http::request_parser<http::string_body> parser;
   parser.body_limit(config.max_body_bytes);
@@ -182,7 +240,7 @@ void HandleSession(tcp::socket socket, const HttpServerConfig& config,
     if (request.method() == http::verb::get && path == "/pdal/v1") {
       WriteJson(socket, request.version(), http::status::ok,
                 boost::json::object{{"api_version", kApiVersion},
-                                    {"name", "Protected Data Access Layer"},
+                                    {"name", "pDAL Open Vehicle Data Access Layer"},
                                     {"capabilities", "/pdal/v1/capabilities"}});
     } else if (request.method() == http::verb::get &&
                path == "/pdal/v1/capabilities") {
@@ -191,20 +249,62 @@ void HandleSession(tcp::socket socket, const HttpServerConfig& config,
     } else if (request.method() == http::verb::get &&
                path == "/pdal/v1/resources") {
       boost::json::array resources;
-      for (const auto& resource : pipeline->catalog().List()) {
+      for (const auto& resource : query_engine->Discover(request_id)) {
         resources.emplace_back(ResourceToJson(resource));
       }
       WriteJson(socket, request.version(), http::status::ok,
                 boost::json::object{{"api_version", kApiVersion},
-                                    {"resources", std::move(resources)}});
-    } else if (request.method() == http::verb::get &&
-               path.starts_with("/pdal/v1/resources/")) {
-      const auto resource_id = path.substr(std::string("/pdal/v1/resources/").size());
-      if (resource_id.empty() || resource_id.find('/') != std::string::npos) {
+                                    {"resources", std::move(resources)}},
+                request_id);
+    } else if (path.starts_with("/pdal/v1/resources/")) {
+      const auto suffix = path.substr(std::string("/pdal/v1/resources/").size());
+      const auto separator = suffix.find('/');
+      const auto resource_id = suffix.substr(0, separator);
+      const auto operation = separator == std::string::npos
+                                 ? std::string{}
+                                 : suffix.substr(separator + 1);
+      if (resource_id.empty() ||
+          (separator != std::string::npos && operation.find('/') != std::string::npos)) {
         throw PdalError(ErrorClass::kResourceNotFound, "unknown logical resource");
       }
-      WriteJson(socket, request.version(), http::status::ok,
-                ResourceToJson(pipeline->catalog().Get(resource_id)));
+      if (request.method() == http::verb::get && operation.empty()) {
+        WriteJson(socket, request.version(), http::status::ok,
+                  ResourceToJson(query_engine->Describe(resource_id, request_id)),
+                  request_id);
+      } else if (request.method() == http::verb::post && operation == "history") {
+        boost::json::value body;
+        try {
+          body = boost::json::parse(request.body());
+        } catch (const std::exception&) {
+          throw PdalError(ErrorClass::kInvalidRequest,
+                          "request body is not valid JSON");
+        }
+        if (!body.is_object()) {
+          throw PdalError(ErrorClass::kInvalidRequest,
+                          "request body must be a JSON object");
+        }
+        auto& object = body.as_object();
+        object["resources"] = boost::json::array{resource_id};
+        auto query = NativeHttpAdapter().ToDataQuery(
+            body, Operation::kHistory, ExtractHeaders(request));
+        request_id = query.request_id;
+        WriteDataStream(socket, request.version(),
+                        query_engine->Execute(std::move(query)));
+      } else if (request.method() == http::verb::get &&
+                 (operation == "latest" || operation == "subscribe")) {
+        const auto selected_operation = operation == "latest"
+                                            ? Operation::kLatest
+                                            : Operation::kSubscribe;
+        const boost::json::object body{{"resource", resource_id},
+                                       {"purpose", "development"}};
+        auto query = NativeHttpAdapter().ToDataQuery(
+            body, selected_operation, ExtractHeaders(request));
+        request_id = query.request_id;
+        WriteDataStream(socket, request.version(),
+                        query_engine->Execute(std::move(query)));
+      } else {
+        throw PdalError(ErrorClass::kResourceNotFound, "endpoint not found");
+      }
     } else if (request.method() == http::verb::get &&
                path.starts_with("/pdal/v1/requests/")) {
       const auto id = path.substr(std::string("/pdal/v1/requests/").size());
@@ -236,9 +336,19 @@ void HandleSession(tcp::socket socket, const HttpServerConfig& config,
         throw PdalError(ErrorClass::kInvalidRequest, "request body is not valid JSON");
       }
       const auto headers = ExtractHeaders(request);
-      auto canonical = path.starts_with("/sovd/")
-                           ? SovdAdapter().ToCanonicalRequest(body, headers)
-                           : NativeHttpAdapter().ToCanonicalRequest(body, headers);
+      auto translated = path.starts_with("/sovd/")
+                            ? SovdAdapter().ToCanonicalRequest(body, headers)
+                            : NativeHttpAdapter().ToCanonicalRequest(body, headers);
+      // The compatible bulk envelope can contain several resources, while a
+      // DataQuery intentionally addresses one. Every single-resource REST and
+      // SOVD request still crosses the stable semantic contract before it
+      // enters the retained protected bulk pipeline.
+      auto canonical = translated;
+      if (translated.resources.size() == 1) {
+        canonical = ToPdalRequest(ToDataQuery(translated));
+        canonical.api_version = translated.api_version;
+        canonical.delivery.mode = translated.delivery.mode;
+      }
       request_id = canonical.request_id;
       auto prepared = pipeline->Prepare(std::move(canonical));
       if (prepared.request.delivery.mode == DeliveryMode::kMetadata ||
@@ -269,31 +379,42 @@ void HandleSession(tcp::socket socket, const HttpServerConfig& config,
 }  // namespace
 
 HttpServer::HttpServer(HttpServerConfig config,
-                       std::shared_ptr<const PdalPipeline> pipeline)
-    : config_(std::move(config)), pipeline_(std::move(pipeline)) {
-  if (!pipeline_) throw std::invalid_argument("HTTP server requires a pipeline");
+                       std::shared_ptr<const PdalPipeline> pipeline,
+                       std::shared_ptr<const QueryEngine> query_engine)
+    : config_(std::move(config)),
+      pipeline_(std::move(pipeline)),
+      query_engine_(std::move(query_engine)) {
+  if (!pipeline_ || !query_engine_) {
+    throw std::invalid_argument("HTTP server requires a pipeline and query engine");
+  }
 }
 
 void HttpServer::Run() {
   asio::io_context context(1);
   const auto address = asio::ip::make_address(config_.address);
   tcp::acceptor acceptor(context, {address, config_.port});
-  std::atomic_size_t active = 0;
+  auto active = std::make_shared<std::atomic_size_t>(0);
   for (;;) {
     tcp::socket socket(context);
-    acceptor.accept(socket);
-    if (active.load() >= config_.max_connections) {
+    beast::error_code accept_error;
+    acceptor.accept(socket, accept_error);
+    if (accept_error == asio::error::operation_aborted ||
+        accept_error.value() == EINTR) {
+      break;
+    }
+    if (accept_error) throw boost::system::system_error(accept_error);
+    if (active->load() >= config_.max_connections) {
       WriteJson(socket, 11, http::status::service_unavailable,
                 ErrorEnvelope(PdalError(ErrorClass::kBackendUnavailable,
                                         "server connection limit reached"),
                               GenerateRequestId()));
       continue;
     }
-    ++active;
+    ++*active;
     std::thread([socket = std::move(socket), config = config_, pipeline = pipeline_,
-                 &active]() mutable {
-      HandleSession(std::move(socket), config, pipeline);
-      --active;
+                 query_engine = query_engine_, active]() mutable {
+      HandleSession(std::move(socket), config, pipeline, query_engine);
+      --*active;
     }).detach();
   }
 }

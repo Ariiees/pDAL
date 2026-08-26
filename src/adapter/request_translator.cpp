@@ -194,6 +194,43 @@ PdalRequest NativeHttpAdapter::ToCanonicalRequest(
   return request;
 }
 
+DataQuery NativeHttpAdapter::ToDataQuery(
+    const boost::json::value& external, Operation operation,
+    const ExternalHeaders& headers) const {
+  if (operation == Operation::kHistory) {
+    auto query = pdal::ToDataQuery(ToCanonicalRequest(external, headers));
+    query.operation = operation;
+    return query;
+  }
+  const auto& input = RequireObject(external);
+  boost::json::object compatibility;
+  if (const auto* resource = input.if_contains("resource")) {
+    compatibility["resources"] = boost::json::array{*resource};
+  } else if (const auto* resources = input.if_contains("resources")) {
+    compatibility["resources"] = *resources;
+  } else {
+    throw PdalError(ErrorClass::kInvalidRequest,
+                    "resource is required");
+  }
+  compatibility["time"] = boost::json::object{{"start_ns", 1}, {"end_ns", 1}};
+  compatibility["purpose"] = input.if_contains("purpose")
+                                  ? *input.if_contains("purpose")
+                                  : boost::json::value("development");
+  if (const auto* representation = input.if_contains("representation")) {
+    compatibility["representation"] = *representation;
+  }
+  if (const auto* options = input.if_contains("options")) {
+    compatibility["delivery"] = *options;
+  } else if (const auto* delivery = input.if_contains("delivery")) {
+    compatibility["delivery"] = *delivery;
+  }
+  auto query = pdal::ToDataQuery(ToCanonicalRequest(compatibility, headers));
+  query.operation = operation;
+  query.selector.time_range.reset();
+  ValidateDataQuery(query);
+  return query;
+}
+
 PdalRequest SovdAdapter::ToCanonicalRequest(
     const boost::json::value& external, const ExternalHeaders& headers) const {
   const auto& body = RequireObject(external);
@@ -228,6 +265,11 @@ PdalRequest SovdAdapter::ToCanonicalRequest(
   return NativeHttpAdapter().ToCanonicalRequest(native, headers);
 }
 
+DataQuery SovdAdapter::ToDataQuery(
+    const boost::json::value& external, const ExternalHeaders& headers) const {
+  return pdal::ToDataQuery(ToCanonicalRequest(external, headers));
+}
+
 PdalRequest LocalCliAdapter::ToCanonicalRequest(
     const std::vector<std::string>& arguments) const {
   PdalRequest request;
@@ -258,6 +300,15 @@ PdalRequest LocalCliAdapter::ToCanonicalRequest(
   }
   ValidateRequest(request);
   return request;
+}
+
+DataQuery LocalCliAdapter::ToDataQuery(
+    const std::vector<std::string>& arguments, Operation operation) const {
+  auto query = pdal::ToDataQuery(ToCanonicalRequest(arguments));
+  query.operation = operation;
+  if (operation != Operation::kHistory) query.selector.time_range.reset();
+  ValidateDataQuery(query);
+  return query;
 }
 
 void ValidateRequest(const PdalRequest& request) {

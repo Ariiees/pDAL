@@ -1,43 +1,71 @@
-# pDAL — Protected Data Access Layer
+# pDAL — Open Vehicle Data Access Layer
 
-pDAL is a transport-independent, protected vehicle-data abstraction above AVS. Clients name stable logical resources, while the AVS storage adapter alone translates those resources into AVS topics and `RetrieveAPI` calls.
+pDAL is an in-process C++ modular monolith that gives applications stable logical vehicle-data resources while keeping AVS and ROS details private.
 
 ```text
-HTTP / SOVD-style / local CLI
-             |
-      canonical PdalRequest
-             |
- identity -> policy -> AuthorizedAccessPlan
-             |
-        QueryPlanner
-             |
-        StorageBackend
-             |
-    AvsStorageBackend -> AVS RetrieveAPI
-             |
- representation -> bounded streaming response
+PdalClient / REST / SOVD binding
+                |
+             DataQuery
+                |
+            QueryEngine
+           /           \
+      HISTORY       LATEST/SUBSCRIBE
+         |                 |
+ IStorageBackend     ILiveDataSource
+         |                 |
+ AvsStorageBackend   RosLiveDataSource
+         |                 |
+  AVS SSD + HDD          ROS 2
 ```
 
-The initial catalog contains:
+The canonical resources supplied with the repository are `camera.front`, `lidar.top`, and `position`. The former `vehicle.*` identifiers remain private compatibility aliases. Public descriptors and samples never contain ROS topics, AVS references, trips, files, offsets, or storage tiers.
 
-- `vehicle.camera.front` (`jpeg`)
-- `vehicle.lidar.top` (`laz`)
-- `vehicle.position` (`avs-gps-binary`)
+## Developer API
 
-ROS topics, trip IDs, log/index paths, offsets, and tier layout are never serialized by a public pDAL endpoint.
+```cpp
+pdal::PdalClient client(query_engine);
 
-## Build
+for (const auto& resource : client.resources()) {
+  // DISCOVER
+}
 
-The default build consumes the existing AVS `RetrieveAPI` source read-only from `/home/avs/AVS-PI/src/avs`. Override that location when needed.
+auto camera = client.camera("front");
+auto descriptor = camera.describe();
+auto history = camera.history(start_ns, end_ns);
+for (const auto& frame : history) {
+  // HISTORY: finite DataStream
+}
+
+auto current = camera.latest();              // LATEST
+auto subscription = camera.subscribe();      // SUBSCRIBE
+camera.subscribe([](const pdal::DataSample& sample) {
+  // callback form uses the same continuous DataStream
+});
+```
+
+Typed helpers use the same generic resource handle and `QueryEngine` as `open("camera.front")`.
+
+## Build and test
+
+The AVS source root defaults to `/home/avs/AVS-PI/src/avs`. pDAL uses the small AVS-owned unified history API there; AVS remains the owner of SQLite, append-log, and cold archive interpretation.
 
 ```bash
 cmake -S . -B build \
-  -DPDAL_AVS_SOURCE_ROOT=/home/avs/AVS-PI/src/avs
+  -DPDAL_AVS_SOURCE_ROOT=/home/avs/AVS-PI/src/avs \
+  -DPDAL_WITH_ROS_LIVE=OFF
 cmake --build build -j2
 ctest --test-dir build --output-on-failure
 ```
 
-The core has no ROS dependency. The only AVS dependency is the `pdal_avs_backend` target. A core-only build can use `-DPDAL_WITH_AVS=OFF` for tests or another storage adapter.
+For the ROS 2 live source:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+cmake -S . -B build-ros -DPDAL_WITH_ROS_LIVE=ON
+cmake --build build-ros -j2
+```
+
+ROS support is optional at configuration time. If its dependencies are absent, the core and historical backend still build.
 
 ## Run
 
@@ -45,54 +73,28 @@ The core has no ROS dependency. The only AVS dependency is the `pdal_avs_backend
 ./build/pdal serve --config config/pdal.yaml
 ```
 
-Discovery is unauthenticated:
+Discovery and operation-oriented bindings:
 
 ```bash
 curl http://127.0.0.1:8080/pdal/v1/resources
-curl http://127.0.0.1:8080/pdal/v1/capabilities
-```
+curl http://127.0.0.1:8080/pdal/v1/resources/camera.front
+curl http://127.0.0.1:8080/pdal/v1/resources/camera.front/latest
+curl http://127.0.0.1:8080/pdal/v1/resources/camera.front/subscribe
 
-Queries require identity headers. In this prototype they represent claims supplied by a trusted local deployment boundary; they are not production authentication.
-
-```bash
-curl -sS http://127.0.0.1:8080/pdal/v1/query \
+curl -X POST http://127.0.0.1:8080/pdal/v1/resources/camera.front/history \
   -H 'Content-Type: application/json' \
-  -H 'X-PDAL-Principal: technician-17' \
-  -H 'X-PDAL-Organization: workshop' \
-  -H 'X-PDAL-Role: service' \
   --data '{
-    "resources": ["vehicle.camera.front"],
-    "time": {"start_ns": 1766013563038953891, "end_ns": 1766013568038953891},
-    "purpose": "incident-investigation",
+    "time": {"start_ns": 1770307702634771758, "end_ns": 1770307703634771758},
+    "purpose": "development",
     "representation": {"format": "jpeg"},
-    "delivery": {"mode": "metadata", "max_records": 100}
+    "delivery": {"max_records": 2, "max_bytes": 67108864}
   }'
 ```
 
-The physical-service CLI enters the identical policy/planning/backend pipeline:
+`POST /pdal/v1/query` and `POST /sovd/v1/bulk-data/query` remain compatible finite-history bindings. The CLI remains available for physical-service workflows.
 
-```bash
-./build/pdal query \
-  --resource vehicle.camera.front \
-  --start 1766013563038953891 \
-  --end 1766013568038953891 \
-  --purpose diagnostics \
-  --format jpeg \
-  --metadata
-```
+## Development security status
 
-The demonstration client is at `http://127.0.0.1:8080/pdal/v1/demo`.
+The operation-oriented `QueryEngine` contains explicit `PolicyHook` and `PrivacyHook` positions, currently wired to development-only `PassThroughPolicy` and `NoOpPrivacy`. The legacy protected history endpoint retains the existing YAML role policy. Neither header claims nor these placeholders are production authentication. See [TODO.md](TODO.md) before deployment.
 
-## Configuration and security
-
-- [`config/resources.yaml`](config/resources.yaml) is the private logical-resource-to-backend mapping.
-- [`config/policy.yaml`](config/policy.yaml) narrows resources, purposes, time, record counts, byte counts, and transformations per role.
-- [`config/pdal.yaml`](config/pdal.yaml) configures storage, audit logging, the server, and continuation signing.
-
-Replace the development continuation secret and the header-based identity boundary before production use. Audit events contain request metadata and metrics, never sensor payloads.
-
-## Phase-1 boundary
-
-The AVS C++ API currently exposes reusable SSD retrieval only. pDAL therefore reports `cold_tier: false` and uses the hot tier for this vertical slice. The HDD archive format is deliberately not reimplemented here. A future AVS-owned unified hot/cold retrieval API can be connected without changing pDAL request, policy, planning, or response semantics.
-
-See [architecture](docs/architecture.md), [API v1](docs/api-v1.md), and the inspected-file mapping in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+Configuration lives in [`config/`](config), the detailed design is in [docs/architecture.md](docs/architecture.md), the wire format is in [docs/api-v1.md](docs/api-v1.md), and performance methodology is in [docs/performance.md](docs/performance.md).
