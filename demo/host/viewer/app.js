@@ -284,8 +284,8 @@ function initLidar() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x061417);
   const camera = new THREE.PerspectiveCamera(52, 2, .02, 10000);
-  camera.position.set(14, -16, 10);
-  camera.up.set(0, 0, 1);
+  camera.position.set(0, 0, 20);
+  camera.up.set(0, 1, 0);
   const renderer = new THREE.WebGLRenderer({antialias: true});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -297,12 +297,39 @@ function initLidar() {
   let cloud = null;
   let grid = null;
   let axes = null;
+  let fittedSpans = null;
+  let fittedRadius = 1;
+  let viewportWidth = 0;
+  let viewportHeight = 0;
+  function fitTopDown(spans, radius) {
+    const aspect = Math.max(camera.aspect, .01);
+    const halfVertical = Math.max(spans[1] / 2, 1);
+    const halfHorizontal = Math.max(spans[0] / 2, 1);
+    const verticalTangent = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const distanceForHeight = halfVertical / verticalTangent;
+    const distanceForWidth = halfHorizontal / (verticalTangent * aspect);
+    const distance = Math.max(distanceForHeight, distanceForWidth) * 1.12 + spans[2] / 2;
+    camera.up.set(0, 1, 0);
+    camera.position.set(0, 0, distance);
+    camera.near = Math.max(.1, distance - radius * 2);
+    camera.far = Math.max(1000, distance + radius * 4);
+    camera.updateProjectionMatrix();
+    controls.target.set(0, 0, 0);
+    controls.minDistance = Math.max(radius * .12, 1);
+    controls.maxDistance = Math.max(distance * 4, radius * 8);
+    controls.update();
+  }
   function resize() {
     const width = container.clientWidth;
     const height = container.clientHeight;
     renderer.setSize(width, height, false);
     camera.aspect = width / Math.max(height, 1);
     camera.updateProjectionMatrix();
+    if (fittedSpans && (width !== viewportWidth || height !== viewportHeight)) {
+      fitTopDown(fittedSpans, fittedRadius);
+    }
+    viewportWidth = width;
+    viewportHeight = height;
   }
   function animate() {
     resize();
@@ -372,14 +399,9 @@ function initLidar() {
       scene.add(grid);
       axes = new THREE.AxesHelper(radius * .12);
       scene.add(axes);
-      camera.position.set(radius * 1.35, -radius * 1.65, radius * 1.1);
-      camera.near = Math.max(.1, radius / 1000);
-      camera.far = Math.max(1000, radius * 10);
-      camera.updateProjectionMatrix();
-      controls.target.set(0, 0, 0);
-      controls.minDistance = radius * .15;
-      controls.maxDistance = radius * 8;
-      controls.update();
+      fittedSpans = spans;
+      fittedRadius = radius;
+      fitTopDown(spans, radius);
       return {count, radius, spans};
     },
   };

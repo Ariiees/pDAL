@@ -104,7 +104,7 @@ h1 { font-size: 21px; margin-top: 3px; }
 .camera-controls button:last-child { border-right: 0; }
 .camera-controls button:hover { color: var(--cyan); background: rgba(81,217,209,.12); }
 .camera-controls #cameraZoomReset { min-width: 44px; font-size: 8px; letter-spacing: .05em; }
-.lidar-stage canvas { position: absolute; inset: 0; display: block; }
+.lidar-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .empty-state { color: var(--muted); text-align: center; }
 .empty-state strong, .empty-state small { display: block; }
 .empty-state strong { color: #b8c5c9; font-size: 11px; margin: 5px 0 2px; }
