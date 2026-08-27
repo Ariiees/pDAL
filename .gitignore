@@ -5,3 +5,6 @@
 *.jsonl
 __pycache__/
 *.py[cod]
+*.log
+*.pid
+*-proof.png

@@ -1,27 +1,26 @@
-# Production security, privacy, and lifecycle TODO
+# Future real hard-brake event integration
 
-The current `PassThroughPolicy`, `NoOpPrivacy`, and trusted-header identity mechanism are development placeholders. They provide no production security claim.
+The OEM demo intentionally returns `events: []`. Current AVS recordings do not
+contain Lincoln MKZ / Dataspeed brake records, so existing GPS-derived event
+summaries are not used and no incidents are fabricated.
 
-- [ ] Authentication: verify workload/user identity instead of trusting request headers.
-- [ ] Authorization: bind policy decisions to verified identity and vehicle/resource scope.
-- [ ] Purpose and context: authenticate purpose claims and define an enforceable context model.
-- [ ] User consent: represent, verify, expire, and revoke consent where applicable.
-- [ ] Data minimization: make policy narrow resource, range, sampling, representation, records, and bytes before physical reads.
-- [ ] Privacy transformation: implement reviewed redaction/aggregation providers with fail-closed behavior.
-- [ ] TLS/mTLS: protect remote bindings and establish deployment-specific certificate lifecycle.
-- [ ] Encryption at rest: align AVS storage encryption with performance and recovery requirements.
-- [ ] Key management: define hardware-backed storage, rotation, revocation, backup, and recovery.
-- [ ] Integrity: authenticate configuration, indexes, archives, payloads, binaries, and updates.
-- [ ] Physical storage compromise: document threat model and protection for removable SSD/HDD media.
-- [ ] Audit: protect logs from tampering, minimize sensitive fields, export asynchronously, and define alerting.
-- [ ] Retention/deletion: enforce policy across SSD, HDD, replicas, backups, indexes, and audit records.
-- [ ] ISO/SAE 21434: perform TARA, trace controls, and retain verification evidence.
-- [ ] UNECE R155: map the production deployment and operational monitoring to CSMS obligations.
-- [ ] Error review: verify every dependency exception maps to a stable, non-sensitive pDAL error.
-- [ ] Denial-of-service review: load-test connection, bulk, live, range, record, byte, and queue limits on Raspberry Pi 5 hardware.
+The future implementation must follow this sequence:
 
-Future functionality—not implemented in v1:
+1. Add an AVS recorder that subscribes to the real Lincoln MKZ / Dataspeed
+   vehicle-interface brake signal and stores each value with its source
+   timestamp.
+2. After AVS closes a recording, invoke a pDAL event scanner over those stored
+   brake records.
+3. Document and version a hard-brake algorithm and threshold based on the real
+   brake signal. The scanner must reject missing, stale, and invalid source
+   values rather than substituting simulated data.
+4. Group qualifying samples into hard-brake intervals and choose the peak
+   braking sample timestamp as the incident time.
+5. Add only minimal incident metadata (event ID/type, interval, peak timestamp,
+   threshold/algorithm version, and non-sensitive metrics) to the trip summary.
+6. Show incident markers on the OEM map and timeline. Let the Incident
+   Investigator jump to a pDAL-authorized time window around an event; other
+   roles must still be subject to their normal resource policy.
 
-- [ ] Add verified VSS/VDM references only where the semantics are genuinely equivalent.
-- [ ] Add another `IStorageBackend` only when a real future storage system is selected.
-- [ ] Design controlled `DerivedResource`/`DataFunction` execution without arbitrary third-party code.
+The event scanner and viewer integration remain blocked until the real brake
+recorder and a documented signal-specific threshold are available.

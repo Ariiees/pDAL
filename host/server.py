@@ -113,7 +113,7 @@ def main() -> int:
         health = check_pi(args.pi_url)
     except Exception as error:
         print(f"Pi ↔ host connectivity check failed for {args.pi_url}: {error}", file=sys.stderr)
-        print("Start the Pi side first with ./demo/scripts/start_pi.sh", file=sys.stderr)
+        print("Start the pDAL gateway on the Pi before starting this host viewer.", file=sys.stderr)
         return 1
     root = Path(__file__).resolve().parent / "viewer"
     os.chdir(root)

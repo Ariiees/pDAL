@@ -1,100 +1,80 @@
-# pDAL — Open Vehicle Data Access Layer
+# pDAL OEM host viewer
 
-pDAL is an in-process C++ modular monolith that gives applications stable logical vehicle-data resources while keeping AVS and ROS details private.
+This branch contains only the code that runs on the OEM host computer. The
+pDAL service, AVS storage integration, authorization policy, and raw-data
+gateway run on the Raspberry Pi from the `pDAL` branch.
+
+The host does not receive recordings in bulk and does not ask the Pi to decode
+sensor data. It requests authorized `PDALSTR1` records, then performs GPS,
+JPEG, and LAZ decoding and visualization locally in the browser.
+
+## Layout
 
 ```text
-PdalClient / REST / SOVD binding
-                |
-             DataQuery
-                |
-            QueryEngine
-           /           \
-      HISTORY       LATEST/SUBSCRIBE
-         |                 |
- IStorageBackend     ILiveDataSource
-         |                 |
- AvsStorageBackend   RosLiveDataSource
-         |                 |
-  AVS SSD + HDD          ROS 2
+host/server.py              Static viewer and transparent Pi API proxy
+host/viewer/                Map, camera, LiDAR, timeline, and policy UI
+scripts/start_host.sh       Host launcher
+scripts/check_connectivity.sh
+tests/smoke_test.py         End-to-end Pi-to-host validation
+tests/laz_decode_test.js    Optional LAZ decoder validation
 ```
 
-The canonical resources supplied with the repository are `camera.front`, `lidar.top`, and `position`. The former `vehicle.*` identifiers remain private compatibility aliases. Public descriptors and samples never contain ROS topics, AVS references, trips, files, offsets, or storage tiers.
+Generated screenshots, logs, PID files, bytecode, and sensor recordings are
+not part of this branch.
 
-## Developer API
+## Start
 
-```cpp
-pdal::PdalClient client(query_engine);
-
-for (const auto& resource : client.resources()) {
-  // DISCOVER
-}
-
-auto camera = client.camera("front");
-auto descriptor = camera.describe();
-auto history = camera.history(start_ns, end_ns);
-for (const auto& frame : history) {
-  // HISTORY: finite DataStream
-}
-
-auto current = camera.latest();              // LATEST
-auto subscription = camera.subscribe();      // SUBSCRIBE
-camera.subscribe([](const pdal::DataSample& sample) {
-  // callback form uses the same continuous DataStream
-});
-```
-
-Typed helpers use the same generic resource handle and `QueryEngine` as `open("camera.front")`.
-
-## Build and test
-
-The AVS source root defaults to `/home/avs/AVS-PI/src/avs`. pDAL uses the small AVS-owned unified history API there; AVS remains the owner of SQLite, append-log, and cold archive interpretation.
+The Pi must already expose its gateway at `http://128.175.213.254:8090`.
+From the root of this branch on the host:
 
 ```bash
-cmake -S . -B build \
-  -DPDAL_AVS_SOURCE_ROOT=/home/avs/AVS-PI/src/avs \
-  -DPDAL_WITH_ROS_LIVE=OFF
-cmake --build build -j2
-ctest --test-dir build --output-on-failure
+./scripts/check_connectivity.sh
+./scripts/start_host.sh
 ```
 
-For the ROS 2 live source:
+Open `http://127.0.0.1:8088`. To use another Pi address:
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-cmake -S . -B build-ros -DPDAL_WITH_ROS_LIVE=ON
-cmake --build build-ros -j2
+PI_URL=http://PI_ADDRESS:8090 ./scripts/check_connectivity.sh
+./scripts/start_host.sh --pi-url http://PI_ADDRESS:8090
 ```
 
-ROS support is optional at configuration time. If its dependencies are absent, the core and historical backend still build.
+The default viewer role is Fleet Analyst. To open directly as Incident
+Investigator:
 
-## Run
+```text
+http://127.0.0.1:8088/?role=incident_investigator
+```
+
+## Host responsibilities
+
+- Decode sampled GPS records and render the retained route.
+- Display complete retained JPEG frames with fit, pan, zoom, and full-screen
+  controls.
+- Decode the authorized LAZ record and render its complete point cloud from a
+  centered top-down default view.
+- Render the multimodality timeline and measured Pi-to-host transfer evidence.
+- Display real pDAL authorization denials returned by the Pi.
+
+The browser loads MapLibre, Three.js, loaders.gl, and map tiles from their
+pinned public URLs, so it needs internet access in addition to connectivity to
+the Pi.
+
+## Verify
+
+With the Pi gateway running:
 
 ```bash
-./build/pdal serve --config config/pdal.yaml
+python3 tests/smoke_test.py --pi-url http://128.175.213.254:8090
 ```
 
-Discovery and operation-oriented bindings:
+The smoke test verifies discovery, the real pDAL HTTP 403, raw GPS/JPEG/LAZ
+payloads, closest-record timing, timeline data, and measured transfer bytes.
+
+An optional Deno-based LAZ decoder check is available:
 
 ```bash
-curl http://127.0.0.1:8080/pdal/v1/resources
-curl http://127.0.0.1:8080/pdal/v1/resources/camera.front
-curl http://127.0.0.1:8080/pdal/v1/resources/camera.front/latest
-curl http://127.0.0.1:8080/pdal/v1/resources/camera.front/subscribe
-
-curl -X POST http://127.0.0.1:8080/pdal/v1/resources/camera.front/history \
-  -H 'Content-Type: application/json' \
-  --data '{
-    "time": {"start_ns": 1770307702634771758, "end_ns": 1770307703634771758},
-    "purpose": "development",
-    "representation": {"format": "jpeg"},
-    "delivery": {"max_records": 2, "max_bytes": 67108864}
-  }'
+deno run --allow-net tests/laz_decode_test.js http://128.175.213.254:8090
 ```
 
-`POST /pdal/v1/query` and `POST /sovd/v1/bulk-data/query` remain compatible finite-history bindings. The CLI remains available for physical-service workflows.
-
-## Development security status
-
-The operation-oriented `QueryEngine` contains explicit `PolicyHook` and `PrivacyHook` positions, currently wired to development-only `PassThroughPolicy` and `NoOpPrivacy`. The legacy protected history endpoint retains the existing YAML role policy. Neither header claims nor these placeholders are production authentication. See [TODO.md](TODO.md) before deployment.
-
-Configuration lives in [`config/`](config), the detailed design is in [docs/architecture.md](docs/architecture.md), the wire format is in [docs/api-v1.md](docs/api-v1.md), and performance methodology is in [docs/performance.md](docs/performance.md).
+See [TODO.md](TODO.md) for the future real brake-event integration boundary.
