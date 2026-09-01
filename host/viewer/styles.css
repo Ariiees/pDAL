@@ -28,9 +28,42 @@ button, select { font: inherit; }
 .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 4px rgba(244,183,99,.1); }
 .pulse.ready { background: var(--cyan); box-shadow: 0 0 0 4px rgba(81,217,209,.1); }
 .divider { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
-.role-control { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-.role-control > span { color: var(--muted); font: 600 9px ui-monospace, monospace; letter-spacing: .14em; }
 select { min-width: 220px; background: #111e21; color: var(--ink); border: 1px solid #304348; border-radius: 8px; padding: 9px 35px 9px 12px; outline: none; }
+/* Session info (topbar) */
+.session-info { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.session-label { color: var(--muted); font: 600 9px ui-monospace, monospace; letter-spacing: .14em; }
+.session-role { color: var(--ink); font: 600 11px ui-monospace, monospace; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-countdown { color: var(--cyan); font: 700 10px ui-monospace, monospace; min-width: 28px; text-align: right; }
+.logout-button { color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: 600 10px ui-monospace, monospace; cursor: pointer; letter-spacing: .04em; }
+.logout-button:hover { color: var(--ink); border-color: #405558; }
+/* Login screen */
+.login-screen { position: fixed; inset: 0; z-index: 40; display: none; place-items: center; background: rgba(8,16,18,.97); backdrop-filter: blur(16px); }
+.login-screen.visible { display: grid; }
+.login-card { width: min(420px, calc(100vw - 40px)); background: #101b1e; border: 1px solid #3e5055; border-radius: 16px; padding: 32px; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+.login-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 24px; }
+.login-brand strong, .login-brand span { display: block; }
+.login-brand strong { font-size: 16px; letter-spacing: .04em; }
+.login-brand span { color: var(--muted); font: 600 9px/1.3 ui-monospace, monospace; letter-spacing: .18em; }
+.login-card h2 { font-size: 20px; margin: 0 0 6px; }
+.login-card > p { color: var(--muted); font-size: 12px; margin: 0 0 22px; line-height: 1.55; }
+.field-label { display: block; margin-bottom: 14px; }
+.field-label > span { display: block; color: var(--muted); font: 650 8px ui-monospace, monospace; letter-spacing: .15em; margin-bottom: 6px; }
+.field-label select { min-width: unset; width: 100%; }
+.field-label input { width: 100%; background: #0c1618; color: var(--ink); border: 1px solid #304348; border-radius: 8px; padding: 10px 12px; outline: none; font: inherit; }
+.field-label input:focus { border-color: var(--cyan); }
+.login-error { min-height: 18px; color: var(--red); font-size: 11px; margin: 0 0 14px; line-height: 1.4; }
+#loginSubmit { width: 100%; padding: 12px; font-size: 13px; margin-top: 2px; }
+#loginSubmit:disabled { opacity: .5; cursor: not-allowed; }
+/* Access matrix panel (sidebar) */
+.access-panel { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.access-panel .eyebrow { display: block; padding: 0 5px; margin-bottom: 8px; }
+.access-rows { display: flex; flex-direction: column; gap: 3px; }
+.access-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-radius: 6px; background: rgba(255,255,255,.02); gap: 8px; flex-wrap: wrap; }
+.access-row > span:first-child { color: #c5d2d5; font: 600 10px ui-monospace, monospace; flex: 1; }
+.access-row small { width: 100%; color: var(--muted-2); font-size: 8px; padding-bottom: 2px; }
+.access-badge { font: 700 8px ui-monospace, monospace; border-radius: 8px; padding: 2px 6px; white-space: nowrap; }
+.access-badge.ok { color: var(--cyan); border: 1px solid rgba(81,217,209,.35); background: rgba(81,217,209,.07); }
+.access-badge.denied { color: var(--red); border: 1px solid rgba(255,110,114,.35); background: rgba(255,110,114,.07); }
 .sidebar { min-height: 0; padding: 22px 16px 16px; border-right: 1px solid var(--line); background: #0a1315; display: flex; flex-direction: column; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; padding: 0 5px; }
 .eyebrow { display: block; color: var(--muted); font: 650 9px/1.4 ui-monospace, monospace; letter-spacing: .15em; }

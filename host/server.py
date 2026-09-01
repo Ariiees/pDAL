@@ -18,6 +18,12 @@ from pathlib import Path
 class ViewerHandler(SimpleHTTPRequestHandler):
     server_version = "pdal-oem-viewer/1"
 
+    def do_POST(self) -> None:
+        if self.path.startswith("/api/"):
+            self._proxy()
+            return
+        self._send(405, b'{"error":"method not allowed"}', "application/json")
+
     def do_GET(self) -> None:
         if self.path == "/health":
             self._send(200, b'{"status":"ready","decode_location":"host"}', "application/json")
@@ -46,7 +52,26 @@ class ViewerHandler(SimpleHTTPRequestHandler):
 
     def _proxy(self) -> None:
         target = self.server.pi_url.rstrip("/") + self.path  # type: ignore[attr-defined]
-        request = urllib.request.Request(target, method="GET")
+
+        # Read request body for POST/PUT/PATCH
+        req_body = None
+        if self.command in ("POST", "PUT", "PATCH"):
+            length = int(self.headers.get("Content-Length", 0))
+            req_body = self.rfile.read(length) if length else b""
+
+        request = urllib.request.Request(target, data=req_body, method=self.command)
+
+        # Forward relevant headers from the browser
+        for header in ("Authorization", "X-Demo-Key", "Content-Type"):
+            value = self.headers.get(header)
+            if value:
+                request.add_header(header, value)
+
+        # Inject pi_key when configured and browser didn't already send one
+        pi_key: str = self.server.pi_key  # type: ignore[attr-defined]
+        if pi_key and not self.headers.get("X-Demo-Key"):
+            request.add_header("X-Demo-Key", pi_key)
+
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 body = response.read()
@@ -108,6 +133,8 @@ def main() -> int:
     parser.add_argument("--address", default=os.environ.get("DEMO_HOST_ADDRESS", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("DEMO_HOST_PORT", "8088")))
     parser.add_argument("--pi-url", default=os.environ.get("PI_URL", "http://128.175.213.254:8090"))
+    parser.add_argument("--pi-key", default=os.environ.get("PI_GATEWAY_KEY", ""),
+                        help="Gateway key (PI_GATEWAY_KEY). Added as X-Demo-Key on every proxied /api/* request.")
     args = parser.parse_args()
     try:
         health = check_pi(args.pi_url)
@@ -119,10 +146,17 @@ def main() -> int:
     os.chdir(root)
     server = ThreadingHTTPServer((args.address, args.port), ViewerHandler)
     server.pi_url = args.pi_url  # type: ignore[attr-defined]
+    server.pi_key = args.pi_key  # type: ignore[attr-defined]
     server.client_status = {}  # type: ignore[attr-defined]
+    key_note = " | gateway key: set" if args.pi_key else ""
     print(
         f"OEM viewer: http://127.0.0.1:{args.port} | "
-        f"Pi: {args.pi_url} ({health.get('status', 'unknown')}) | decode: host",
+        f"Pi: {args.pi_url} ({health.get('status', 'unknown')}) | decode: host{key_note}",
+        file=sys.stderr,
+    )
+    print(
+        "Demo passwords: fleet_analyst=fleet-demo  "
+        "service_technician=service-demo  incident_investigator=incident-demo",
         file=sys.stderr,
     )
     try:

@@ -12,6 +12,30 @@
   </script>
 </head>
 <body>
+  <!-- Login screen — visible until authenticated -->
+  <div id="loginScreen" class="login-screen visible">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-mark">P</div>
+        <div><strong>pDAL</strong><span>OEM HISTORY CONSOLE</span></div>
+      </div>
+      <h2>Sign in</h2>
+      <p>Select your authorized OEM role and enter the demo password.</p>
+      <form id="loginForm">
+        <label class="field-label">
+          <span>ROLE</span>
+          <select id="loginRoleSelect"></select>
+        </label>
+        <label class="field-label">
+          <span>PASSWORD</span>
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="demo password">
+        </label>
+        <p id="loginError" class="login-error" aria-live="polite"></p>
+        <button id="loginSubmit" type="submit" class="proof-button">Sign in →</button>
+      </form>
+    </div>
+  </div>
+
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
@@ -24,10 +48,12 @@
         <span class="divider"></span>
         <span>PI 128.175.213.254</span>
       </div>
-      <label class="role-control">
-        <span>AUTHORIZED VIEW</span>
-        <select id="roleSelect" aria-label="OEM role"></select>
-      </label>
+      <div class="session-info">
+        <span class="session-label">SESSION</span>
+        <span id="sessionRoleLabel" class="session-role">—</span>
+        <span id="sessionCountdown" class="session-countdown"></span>
+        <button id="logoutButton" class="logout-button">Sign out</button>
+      </div>
     </header>
 
     <aside class="sidebar">
@@ -40,6 +66,10 @@
       <div class="policy-card">
         <div class="policy-icon">✓</div>
         <div><span>POLICY PATH</span><strong>AVS → pDAL → OEM</strong><small id="policyVersion">Waiting for policy decision</small></div>
+      </div>
+      <div class="access-panel">
+        <span class="eyebrow">ACCESS MATRIX</span>
+        <div id="accessRows" class="access-rows"></div>
       </div>
     </aside>
 

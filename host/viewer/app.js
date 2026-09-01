@@ -4,7 +4,7 @@ import {parse} from 'https://esm.sh/@loaders.gl/core@4.3.4';
 import {LASLoader} from 'https://esm.sh/@loaders.gl/las@4.3.4';
 
 const $ = (id) => document.getElementById(id);
-const resources = ['position', 'camera.front', 'lidar.top'];
+// ?role= is accepted only as a login-form prefill, never as auth
 const requestedRole = new URLSearchParams(window.location.search).get('role');
 const state = {
   role: requestedRole || 'fleet_analyst',
@@ -19,12 +19,15 @@ const state = {
   recordsReturned: 0,
   sensorGeneration: 0,
   cameraUrl: null,
+  token: null,
+  expiresAt: null,
 };
 
 let map;
 let mapReady = false;
 let sensorTimer;
 let toastTimer;
+let countdownTimer;
 let lidarView;
 const cameraView = {zoom: 1, x: 0, y: 0, dragging: false, lastX: 0, lastY: 0};
 
@@ -33,7 +36,11 @@ function reportClientStatus(values) {
 }
 
 async function trackedFetch(url, options = {}) {
-  const response = await fetch(url, options);
+  const headers = {...(options.headers || {})};
+  if (state.token && url.startsWith('/api/')) {
+    headers['Authorization'] = `Bearer ${state.token}`;
+  }
+  const response = await fetch(url, {...options, headers, cache: options.cache || 'no-store'});
   const body = await response.arrayBuffer();
   const measured = Number(response.headers.get('x-demo-network-bytes') || body.byteLength);
   state.networkBytes += measured;
@@ -45,6 +52,10 @@ async function trackedFetch(url, options = {}) {
     const error = new Error(details.message || details.error || `HTTP ${response.status}`);
     error.status = response.status;
     error.details = details;
+    if (response.status === 401 && state.token) {
+      clearSession();
+      showLogin('Session expired — sign in again');
+    }
     throw error;
   }
   return {response, body};
@@ -415,16 +426,123 @@ async function decodeLaz(payload) {
   return attribute.value;
 }
 
+// ── Session management ──────────────────────────────────────────────────────
+
+function clearSession() {
+  state.token = null;
+  state.expiresAt = null;
+  sessionStorage.removeItem('pdal_token');
+  clearInterval(countdownTimer);
+  countdownTimer = null;
+  $('sessionCountdown').textContent = '';
+}
+
+function startCountdown(expiresIn) {
+  state.expiresAt = Date.now() + expiresIn * 1000;
+  clearInterval(countdownTimer);
+  function tick() {
+    const remaining = Math.max(0, Math.ceil((state.expiresAt - Date.now()) / 1000));
+    $('sessionCountdown').textContent = remaining > 90
+      ? `${Math.ceil(remaining / 60)}m`
+      : `${remaining}s`;
+    if (remaining <= 0) {
+      clearInterval(countdownTimer);
+      clearSession();
+      showLogin('Session expired — sign in again');
+    }
+  }
+  tick();
+  countdownTimer = setInterval(tick, 1000);
+}
+
+function showLogin(message = '') {
+  $('loginScreen').classList.add('visible');
+  $('loginError').textContent = message;
+  $('loginPassword').value = '';
+}
+
+function showApp() {
+  $('loginScreen').classList.remove('visible');
+}
+
+async function doLogin() {
+  const role = $('loginRoleSelect').value;
+  const password = $('loginPassword').value;
+  $('loginError').textContent = '';
+  $('loginSubmit').disabled = true;
+  try {
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role, password}),
+      cache: 'no-store',
+    });
+    const data = await response.json();
+    if (response.status === 200) {
+      state.token = data.token;
+      state.role = data.role;
+      sessionStorage.setItem('pdal_token', data.token);
+      $('sessionRoleLabel').textContent = data.label || data.role;
+      showApp();
+      startCountdown(data.expires_in);
+      $('connectionLabel').textContent = `Vehicle online · ${data.label || data.role}`;
+      await loadTrips();
+    } else if (response.status === 401) {
+      $('loginError').textContent = 'Invalid role or password.';
+    } else if (response.status === 429) {
+      const retry = data.retry_after_seconds || 60;
+      $('loginError').textContent = `Too many failed attempts. Try again in ${retry} s.`;
+    } else if (response.status === 503) {
+      $('loginError').textContent = 'Login not configured on the Pi.';
+    } else {
+      $('loginError').textContent = `Login failed (${response.status}).`;
+    }
+  } catch (err) {
+    $('loginError').textContent = `Network error: ${err.message}`;
+  } finally {
+    $('loginSubmit').disabled = false;
+  }
+}
+
+async function doLogout() {
+  if (state.token) {
+    try {
+      await fetch('/api/logout', {
+        method: 'POST',
+        headers: {'Authorization': `Bearer ${state.token}`},
+        cache: 'no-store',
+      });
+    } catch {}
+  }
+  clearSession();
+  state.trips = [];
+  state.trip = null;
+  state.access = {};
+  state.route = [];
+  state.timeline = {};
+  state.networkBytes = 0;
+  state.recordsReturned = 0;
+  $('tripList').innerHTML = '';
+  $('tripCount').textContent = '—';
+  $('accessRows').innerHTML = '';
+  updateBandwidth();
+  showLogin();
+  $('connectionLabel').textContent = 'Awaiting login…';
+  $('sessionRoleLabel').textContent = '—';
+}
+
+// ── API helpers ─────────────────────────────────────────────────────────────
+
 async function loadRoles() {
   const data = await fetchJson('/api/roles');
   state.roles = data.roles;
   if (!state.roles.some((role) => role.id === state.role)) state.role = 'fleet_analyst';
-  $('roleSelect').innerHTML = data.roles.map((role) => `<option value="${role.id}">${role.label}</option>`).join('');
-  $('roleSelect').value = state.role;
+  $('loginRoleSelect').innerHTML = data.roles.map((role) => `<option value="${role.id}">${role.label}</option>`).join('');
+  $('loginRoleSelect').value = state.role;
 }
 
 async function loadTrips() {
-  const data = await fetchJson(api('/api/trips', {role: state.role}));
+  const data = await fetchJson('/api/trips');
   state.trips = data.recordings;
   state.access = data.access || {};
   $('tripCount').textContent = state.trips.length;
@@ -469,10 +587,9 @@ async function selectTrip(tripId) {
   renderAccess();
   drawTimeline();
   updateBandwidth();
-  // Closest-record panels become useful immediately; the longer full-route
-  // and retained-timestamp index requests can finish progressively.
+  // Closest-record panels become useful immediately; background tasks run in parallel.
   scheduleSensorLoad(0);
-  const background = await Promise.allSettled([loadTimeline(), loadRoute()]);
+  const background = await Promise.allSettled([loadTimeline(), loadRoute(), loadAccess()]);
   const failed = background.find((result) => result.status === 'rejected');
   if (failed) showToast(failed.reason.message, true);
 }
@@ -497,7 +614,7 @@ function renderAccess() {
 }
 
 async function loadTimeline() {
-  const data = await fetchJson(api('/api/timeline', {role: state.role, trip: state.trip.id}));
+  const data = await fetchJson(api('/api/timeline', {trip: state.trip.id}));
   state.timeline = data.tracks || {};
   state.access = data.access || state.access;
   renderAccess();
@@ -509,7 +626,6 @@ async function loadRoute() {
   if (!gps || !state.access.position?.authorized) return;
   const everyN = Math.max(1, Math.ceil((gps.record_count || 1) / 1800));
   const {body} = await trackedFetch(api('/api/history', {
-    role: state.role,
     trip: state.trip.id,
     resource: 'position',
     start_ns: gps.start_ns,
@@ -522,6 +638,31 @@ async function loadRoute() {
   state.route = records.map((record) => ({...decodeGps(record.payload), timestampNs: record.metadata.timestamp_ns}));
   updateBandwidth();
   updateMapRoute();
+}
+
+async function loadAccess() {
+  const params = state.trip ? {trip: state.trip.id} : {};
+  const data = await fetchJson(api('/api/access', params));
+  state.access = data.resources || state.access;
+  renderAccess();
+  renderAccessPanel(data);
+}
+
+function renderAccessPanel(data) {
+  const rows = data.resources || {};
+  const fallbackLabels = {'position': 'GPS', 'camera.front': 'Front Camera', 'lidar.top': 'LiDAR'};
+  $('accessRows').innerHTML = Object.entries(rows).map(([key, info]) => {
+    const authorized = info.authorized;
+    const badge = authorized
+      ? `<span class="access-badge ok">AUTHORIZED</span>`
+      : `<span class="access-badge denied">${info.status || 403} · ${info.code || 'DENIED'}</span>`;
+    const reason = !authorized && info.reason
+      ? `<small>${info.reason}</small>`
+      : '';
+    return `<div class="access-row"><span>${info.label || fallbackLabels[key] || key}</span>${badge}${reason}</div>`;
+  }).join('');
+  const policy = Object.values(rows).find((entry) => entry.policy)?.policy;
+  if (policy) $('policyVersion').textContent = `${policy} · enforced onboard`;
 }
 
 function setSelectedTime(ns) {
@@ -551,7 +692,7 @@ async function loadSelectedSensors() {
 }
 
 async function closest(resource) {
-  return trackedFetch(api('/api/closest', {role: state.role, trip: state.trip.id, resource, t_ns: state.selectedNs}));
+  return trackedFetch(api('/api/closest', {trip: state.trip.id, resource, t_ns: state.selectedNs}));
 }
 
 async function loadGpsClosest(generation) {
@@ -709,14 +850,13 @@ function timeToX(ns, left, right) {
 
 async function runDenialProof() {
   if (!state.trip) return;
-  const role = 'fleet_analyst';
-  const resource = 'camera.front';
   try {
-    await fetchJson(api('/api/denial-proof', {role, trip: state.trip.id, resource}));
+    await fetchJson(api('/api/denial-proof', {trip: state.trip.id, resource: 'camera.front'}));
     showToast('Unexpectedly allowed; inspect demo policy', true);
   } catch (error) {
+    if (error.isSessionExpiry) return;
     const details = error.details || {};
-    $('denialSummary').textContent = `Fleet Analyst requested Front Camera for fleet-monitoring. pDAL returned HTTP ${error.status}; zero camera payload bytes crossed the network.`;
+    $('denialSummary').textContent = `${state.role} requested Front Camera for their purpose. pDAL returned HTTP ${error.status}; zero camera payload bytes crossed the network.`;
     $('denialDetails').textContent = JSON.stringify(details, null, 2);
     $('denialModal').classList.add('visible');
     $('denialModal').setAttribute('aria-hidden', 'false');
@@ -737,15 +877,8 @@ function showToast(message, error = false) {
 }
 
 function bindEvents() {
-  $('roleSelect').addEventListener('change', async (event) => {
-    state.role = event.target.value;
-    $('connectionLabel').textContent = 'Applying onboard policy…';
-    try {
-      await loadTrips();
-      const label = state.roles.find((role) => role.id === state.role)?.label || state.role;
-      $('connectionLabel').textContent = `Vehicle online · ${label}`;
-    } catch (error) { showToast(error.message, true); }
-  });
+  $('loginForm').addEventListener('submit', (event) => { event.preventDefault(); doLogin(); });
+  $('logoutButton').addEventListener('click', doLogout);
   $('denialButton').addEventListener('click', runDenialProof);
   $('closeModal').addEventListener('click', closeModal);
   $('modalDone').addEventListener('click', closeModal);
@@ -763,8 +896,34 @@ async function boot() {
     if (health.decode_location !== 'host') throw new Error('Invalid deployment boundary: decoding must run on host');
     document.querySelector('.pulse').classList.add('ready');
     await loadRoles();
-    await loadTrips();
-    $('connectionLabel').textContent = 'Vehicle online · policy enforced';
+
+    // Try to restore an existing session from sessionStorage
+    const storedToken = sessionStorage.getItem('pdal_token');
+    if (storedToken) {
+      state.token = storedToken;
+      try {
+        const sessionData = await fetchJson('/api/session');
+        if (sessionData.authenticated) {
+          state.role = sessionData.role;
+          $('loginRoleSelect').value = sessionData.role;
+          $('sessionRoleLabel').textContent = sessionData.label || sessionData.role;
+          showApp();
+          startCountdown(sessionData.expires_in);
+          $('connectionLabel').textContent = `Vehicle online · ${sessionData.label || sessionData.role}`;
+          await loadTrips();
+          return;
+        }
+      } catch {
+        // 401 already handled in trackedFetch (clearSession + showLogin called).
+        // For any other error, fall through to show the login form.
+        clearSession();
+        showLogin();
+        return;
+      }
+    }
+
+    showLogin();
+    $('connectionLabel').textContent = 'Awaiting login…';
   } catch (error) {
     $('connectionLabel').textContent = 'Vehicle connection failed';
     showToast(error.message, true);

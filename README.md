@@ -32,15 +32,27 @@ From the root of this branch on the host:
 ./scripts/start_host.sh
 ```
 
-Open `http://127.0.0.1:8088`. To use another Pi address:
+Open `http://127.0.0.1:8088`. A login screen appears — pick a role and enter
+its demo password:
+
+
+| Role                  | Password        |
+| --------------------- | --------------- |
+| Fleet Analyst         | `fleet-demo`    |
+| Service Technician    | `service-demo`  |
+| Incident Investigator | `incident-demo` |
+
+No data loads until you sign in. Five failed attempts lock a role for 60 s.
+The startup banner also prints the passwords as a presenter reminder.
+
+To use another Pi address:
 
 ```bash
 PI_URL=http://PI_ADDRESS:8090 ./scripts/check_connectivity.sh
 ./scripts/start_host.sh --pi-url http://PI_ADDRESS:8090
 ```
 
-The default viewer role is Fleet Analyst. To open directly as Incident
-Investigator:
+To prefill the login form's role select (still requires the password):
 
 ```text
 http://127.0.0.1:8088/?role=incident_investigator
@@ -68,13 +80,20 @@ With the Pi gateway running:
 python3 tests/smoke_test.py --pi-url http://128.175.213.254:8090
 ```
 
-The smoke test verifies discovery, the real pDAL HTTP 403, raw GPS/JPEG/LAZ
-payloads, closest-record timing, timeline data, and measured transfer bytes.
+The smoke test verifies: public health endpoint, unauthenticated 401
+enforcement, wrong-password 401, login for all three roles, the access matrix
+(fleet_analyst sees GPS only, camera/LiDAR denied with 403), the real pDAL
+HTTP 403, raw GPS/JPEG/LAZ payloads, closest-record timing, timeline data,
+measured transfer bytes, and logout.
 
 An optional Deno-based LAZ decoder check is available:
 
 ```bash
 deno run --allow-net tests/laz_decode_test.js http://128.175.213.254:8090
 ```
+
+> **Note:** Camera frames are expected to arrive already blurred once the
+> device-side privacy stage lands (separate workstream). See
+> `docs/security.md` on the `pDAL` branch for the full security model.
 
 See [TODO.md](TODO.md) for the future real brake-event integration boundary.
