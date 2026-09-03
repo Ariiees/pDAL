@@ -3,6 +3,24 @@ policy: policy.yaml
 audit_log: /tmp/pdal-oem-demo-audit.jsonl
 continuation_secret: oem-demo-local-continuation-key
 
+# Bearer-token authentication for the demo. start_pi.sh generates the
+# git-ignored `auth-secret` file next to this config and exports
+# PDAL_AUTH_SECRET so pDAL and the gateway share one key.
+auth:
+  required: true
+  issuer: pdal-local-issuer
+  audience: pdal
+  algorithm: HS256
+  hmac_secret_env: PDAL_AUTH_SECRET
+  hmac_secret_file: auth-secret
+  clock_skew_s: 60
+
+# Camera privacy: blur every person in every returned camera.front frame.
+privacy:
+  enabled: true
+  model_path: ../../../models/yolov8n.onnx
+  jpeg_quality: 90
+
 storage:
   ssd_root: /home/avs/DATA/SSD
   hdd_root: /home/avs/DATA/HDD

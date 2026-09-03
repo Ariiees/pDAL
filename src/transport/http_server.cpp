@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -75,6 +76,56 @@ void WriteJson(tcp::socket& socket, unsigned version, http::status status,
 std::string TargetPath(beast::string_view target) {
   const auto query = target.find('?');
   return std::string(target.substr(0, query));
+}
+
+std::string UrlDecode(std::string_view input) {
+  std::string out;
+  out.reserve(input.size());
+  for (std::size_t i = 0; i < input.size(); ++i) {
+    if (input[i] == '+') {
+      out.push_back(' ');
+    } else if (input[i] == '%' && i + 2 < input.size() &&
+               std::isxdigit(static_cast<unsigned char>(input[i + 1])) &&
+               std::isxdigit(static_cast<unsigned char>(input[i + 2]))) {
+      const auto hex = [](char c) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return c <= '9' ? c - '0' : c - 'a' + 10;
+      };
+      out.push_back(static_cast<char>(hex(input[i + 1]) * 16 + hex(input[i + 2])));
+      i += 2;
+    } else {
+      out.push_back(input[i]);
+    }
+  }
+  return out;
+}
+
+// Returns the first value of a query-string parameter, or an empty string.
+std::string QueryParam(beast::string_view target, std::string_view key) {
+  const auto start = target.find('?');
+  if (start == beast::string_view::npos) return {};
+  std::string_view query(target.data() + start + 1, target.size() - start - 1);
+  std::size_t pos = 0;
+  while (pos < query.size()) {
+    const auto amp = query.find('&', pos);
+    const auto end = amp == std::string_view::npos ? query.size() : amp;
+    const auto pair = query.substr(pos, end - pos);
+    const auto eq = pair.find('=');
+    if (eq != std::string_view::npos && pair.substr(0, eq) == key) {
+      return UrlDecode(pair.substr(eq + 1));
+    }
+    if (amp == std::string_view::npos) break;
+    pos = amp + 1;
+  }
+  return {};
+}
+
+// The verified identity always replaces anything a caller may have sent in the
+// legacy X-PDAL-* identity headers, so they are dropped before translation.
+void StripLegacyIdentityHeaders(ExternalHeaders& headers) {
+  headers.erase("x-pdal-principal");
+  headers.erase("x-pdal-organization");
+  headers.erase("x-pdal-role");
 }
 
 std::string ContentTypeFor(const PdalPipeline& pipeline,
@@ -214,9 +265,15 @@ boost::json::object MetadataBody(const PreparedQuery& prepared) {
   return body;
 }
 
+bool IsPublicEndpoint(http::verb method, const std::string& path) {
+  return method == http::verb::get &&
+         (path == "/pdal/v1" || path == "/pdal/v1/capabilities");
+}
+
 void HandleSession(tcp::socket socket, const HttpServerConfig& config,
                    const std::shared_ptr<const PdalPipeline>& pipeline,
-                   const std::shared_ptr<const QueryEngine>& query_engine) {
+                   const std::shared_ptr<const QueryEngine>& query_engine,
+                   const std::shared_ptr<const Authenticator>& authenticator) {
   beast::flat_buffer buffer;
   http::request_parser<http::string_body> parser;
   parser.body_limit(config.max_body_bytes);
@@ -235,8 +292,15 @@ void HandleSession(tcp::socket socket, const HttpServerConfig& config,
   auto request = parser.release();
   const auto path = TargetPath(request.target());
   std::string request_id = GenerateRequestId();
+  auto headers = ExtractHeaders(request);
 
   try {
+    Principal principal;
+    if (!IsPublicEndpoint(request.method(), path)) {
+      principal = authenticator->Authenticate(headers);
+    }
+    StripLegacyIdentityHeaders(headers);
+
     if (request.method() == http::verb::get && path == "/pdal/v1") {
       WriteJson(socket, request.version(), http::status::ok,
                 boost::json::object{{"api_version", kApiVersion},
@@ -286,7 +350,8 @@ void HandleSession(tcp::socket socket, const HttpServerConfig& config,
         auto& object = body.as_object();
         object["resources"] = boost::json::array{resource_id};
         auto query = NativeHttpAdapter().ToDataQuery(
-            body, Operation::kHistory, ExtractHeaders(request));
+            body, Operation::kHistory, headers);
+        query.context.principal = principal;
         request_id = query.request_id;
         WriteDataStream(socket, request.version(),
                         query_engine->Execute(std::move(query)));
@@ -295,10 +360,13 @@ void HandleSession(tcp::socket socket, const HttpServerConfig& config,
         const auto selected_operation = operation == "latest"
                                             ? Operation::kLatest
                                             : Operation::kSubscribe;
+        auto purpose = QueryParam(request.target(), "purpose");
+        if (purpose.empty()) purpose = "development";
         const boost::json::object body{{"resource", resource_id},
-                                       {"purpose", "development"}};
+                                       {"purpose", purpose}};
         auto query = NativeHttpAdapter().ToDataQuery(
-            body, selected_operation, ExtractHeaders(request));
+            body, selected_operation, headers);
+        query.context.principal = principal;
         request_id = query.request_id;
         WriteDataStream(socket, request.version(),
                         query_engine->Execute(std::move(query)));
@@ -335,10 +403,10 @@ void HandleSession(tcp::socket socket, const HttpServerConfig& config,
       } catch (const std::exception&) {
         throw PdalError(ErrorClass::kInvalidRequest, "request body is not valid JSON");
       }
-      const auto headers = ExtractHeaders(request);
       auto translated = path.starts_with("/sovd/")
                             ? SovdAdapter().ToCanonicalRequest(body, headers)
                             : NativeHttpAdapter().ToCanonicalRequest(body, headers);
+      translated.principal = principal;
       // The compatible bulk envelope can contain several resources, while a
       // DataQuery intentionally addresses one. Every single-resource REST and
       // SOVD request still crosses the stable semantic contract before it
@@ -380,12 +448,15 @@ void HandleSession(tcp::socket socket, const HttpServerConfig& config,
 
 HttpServer::HttpServer(HttpServerConfig config,
                        std::shared_ptr<const PdalPipeline> pipeline,
-                       std::shared_ptr<const QueryEngine> query_engine)
+                       std::shared_ptr<const QueryEngine> query_engine,
+                       std::shared_ptr<const Authenticator> authenticator)
     : config_(std::move(config)),
       pipeline_(std::move(pipeline)),
-      query_engine_(std::move(query_engine)) {
-  if (!pipeline_ || !query_engine_) {
-    throw std::invalid_argument("HTTP server requires a pipeline and query engine");
+      query_engine_(std::move(query_engine)),
+      authenticator_(std::move(authenticator)) {
+  if (!pipeline_ || !query_engine_ || !authenticator_) {
+    throw std::invalid_argument(
+        "HTTP server requires a pipeline, query engine, and authenticator");
   }
 }
 
@@ -412,8 +483,10 @@ void HttpServer::Run() {
     }
     ++*active;
     std::thread([socket = std::move(socket), config = config_, pipeline = pipeline_,
-                 query_engine = query_engine_, active]() mutable {
-      HandleSession(std::move(socket), config, pipeline, query_engine);
+                 query_engine = query_engine_, authenticator = authenticator_,
+                 active]() mutable {
+      HandleSession(std::move(socket), config, pipeline, query_engine,
+                    authenticator);
       --*active;
     }).detach();
   }

@@ -1,0 +1,36 @@
+# Example auth: block for pdal.yaml. Copy the block into your pdal.yaml and
+# provide a real secret. pDAL enforces bearer-token authentication on every
+# endpoint except GET /pdal/v1 and GET /pdal/v1/capabilities.
+
+auth:
+  # false disables enforcement and falls back to unverified X-PDAL-* headers.
+  # Never run production with required: false.
+  required: true
+
+  # Must match the `iss` claim in every accepted token.
+  issuer: pdal-local-issuer
+
+  # Must appear in the `aud` claim (string or array) of every accepted token.
+  audience: pdal
+
+  # Only HS256 is implemented.
+  algorithm: HS256
+
+  # Secret resolution order:
+  #   1. environment variable named here (if set and non-empty)
+  #   2. contents of hmac_secret_file (trailing whitespace trimmed)
+  #   3. inline hmac_secret
+  # The resolved value must be at least 16 bytes.
+  hmac_secret_env: PDAL_AUTH_SECRET
+  hmac_secret_file: auth-secret
+  # hmac_secret: inline-development-secret-change-me
+
+  # Allowed clock difference, in seconds, for exp / nbf checks.
+  clock_skew_s: 60
+
+# Mint a matching token for local use:
+#   demo/scripts/mint_token.py \
+#     --secret-file demo/pi/config/auth-secret \
+#     --issuer pdal-local-issuer --audience pdal \
+#     --subject oem-incident-investigator --role incident_investigator \
+#     --org oem-demo --ttl 900

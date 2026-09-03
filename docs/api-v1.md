@@ -16,6 +16,25 @@ Base path: `/pdal/v1`.
 
 The SDK, operation-oriented REST endpoints, and SOVD adapter normalize to the same `DataQuery` semantics. Bindings never call AVS or ROS directly.
 
+## Authentication
+
+Every endpoint except `GET /pdal/v1` and `GET /pdal/v1/capabilities` requires:
+
+```
+Authorization: Bearer <token>
+```
+
+The token is an `HS256`-signed compact JWT. pDAL verifies the signature,
+`iss`, `aud`, and `exp`, then builds the principal from the `sub`, `role`, and
+`org` claims. `X-PDAL-Principal` / `X-PDAL-Organization` / `X-PDAL-Role` are
+ignored. Failures return `PDAL_UNAUTHENTICATED` (HTTP 401) before any catalog
+or backend access. The `role` claim selects the authorization policy; a
+disallowed role / purpose / resource / time returns `PDAL_FORBIDDEN` (HTTP 403)
+before payload access. See [security.md](security.md).
+
+`LATEST` and `SUBSCRIBE` accept an optional `?purpose=<p>` query parameter
+(default `development`) that is checked against the role's allowed purposes.
+
 ## History request
 
 The resource comes from the URL and cannot be overridden by the body.
@@ -72,6 +91,8 @@ Legacy `vehicle.camera.front`, `vehicle.lidar.top`, and `vehicle.position` input
 
 Errors use a JSON envelope with `code`, `class`, safe message, request ID, and optional safe details. The vocabulary is:
 
+- `PDAL_UNAUTHENTICATED` (missing / invalid bearer token; HTTP 401)
+- `PDAL_FORBIDDEN` (authenticated but not authorized; HTTP 403)
 - `PDAL_RESOURCE_NOT_FOUND`
 - `PDAL_INVALID_QUERY` (semantic `DataQuery` validation)
 - `PDAL_INVALID_REQUEST` (malformed binding input and legacy compatibility)

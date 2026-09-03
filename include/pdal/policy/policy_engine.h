@@ -27,8 +27,12 @@ struct RolePolicy {
 class PolicyEngine {
  public:
   virtual ~PolicyEngine() = default;
+  // `operation` lets live operations (LATEST/SUBSCRIBE) skip the historical
+  // time-window checks while still enforcing role, purpose, resource, and
+  // record/byte limits. HISTORY keeps the full check set.
   virtual AuthorizedAccessPlan Authorize(
-      const PdalRequest& request, const ResourceCatalog& catalog) const = 0;
+      const PdalRequest& request, const ResourceCatalog& catalog,
+      Operation operation = Operation::kHistory) const = 0;
   virtual std::string version() const = 0;
 };
 
@@ -40,7 +44,8 @@ class YamlPolicyEngine final : public PolicyEngine {
       std::unordered_map<std::string, RolePolicy> policies);
 
   AuthorizedAccessPlan Authorize(
-      const PdalRequest& request, const ResourceCatalog& catalog) const override;
+      const PdalRequest& request, const ResourceCatalog& catalog,
+      Operation operation = Operation::kHistory) const override;
   std::string version() const override { return version_; }
 
  private:

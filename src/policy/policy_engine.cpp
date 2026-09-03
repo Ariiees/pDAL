@@ -73,7 +73,8 @@ YamlPolicyEngine YamlPolicyEngine::FromPolicies(
 }
 
 AuthorizedAccessPlan YamlPolicyEngine::Authorize(
-    const PdalRequest& request, const ResourceCatalog& catalog) const {
+    const PdalRequest& request, const ResourceCatalog& catalog,
+    Operation operation) const {
   if (request.principal.principal_id.empty()) {
     throw PdalError(ErrorClass::kUnauthenticated, "a principal is required");
   }
@@ -87,16 +88,23 @@ AuthorizedAccessPlan YamlPolicyEngine::Authorize(
                     "purpose is not permitted for this principal");
   }
 
+  const bool historical = operation == Operation::kHistory;
   TimeRange narrowed = request.time;
-  if (policy.earliest_time_ns) narrowed.start_ns = std::max(narrowed.start_ns, *policy.earliest_time_ns);
-  if (policy.latest_time_ns) narrowed.end_ns = std::min(narrowed.end_ns, *policy.latest_time_ns);
-  if (narrowed.start_ns > narrowed.end_ns) {
-    throw PdalError(ErrorClass::kForbidden,
-                    "requested time range is outside the permitted range");
-  }
-  if (policy.max_time_span_ns > 0 &&
-      narrowed.end_ns - narrowed.start_ns > policy.max_time_span_ns) {
-    narrowed.end_ns = narrowed.start_ns + policy.max_time_span_ns;
+  if (historical) {
+    if (policy.earliest_time_ns) {
+      narrowed.start_ns = std::max(narrowed.start_ns, *policy.earliest_time_ns);
+    }
+    if (policy.latest_time_ns) {
+      narrowed.end_ns = std::min(narrowed.end_ns, *policy.latest_time_ns);
+    }
+    if (narrowed.start_ns > narrowed.end_ns) {
+      throw PdalError(ErrorClass::kForbidden,
+                      "requested time range is outside the permitted range");
+    }
+    if (policy.max_time_span_ns > 0 &&
+        narrowed.end_ns - narrowed.start_ns > policy.max_time_span_ns) {
+      narrowed.end_ns = narrowed.start_ns + policy.max_time_span_ns;
+    }
   }
 
   std::vector<AuthorizedResource> authorized;

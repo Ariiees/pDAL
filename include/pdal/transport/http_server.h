@@ -7,6 +7,7 @@
 
 #include "pdal/pipeline.h"
 #include "pdal/query_engine.h"
+#include "pdal/security/authenticator.h"
 
 namespace pdal {
 
@@ -21,13 +22,15 @@ struct HttpServerConfig {
 class HttpServer {
  public:
   HttpServer(HttpServerConfig config, std::shared_ptr<const PdalPipeline> pipeline,
-             std::shared_ptr<const QueryEngine> query_engine);
+             std::shared_ptr<const QueryEngine> query_engine,
+             std::shared_ptr<const Authenticator> authenticator);
   void Run();
 
  private:
   HttpServerConfig config_;
   std::shared_ptr<const PdalPipeline> pipeline_;
   std::shared_ptr<const QueryEngine> query_engine_;
+  std::shared_ptr<const Authenticator> authenticator_;
 };
 
 }  // namespace pdal

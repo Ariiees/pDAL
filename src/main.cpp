@@ -3,10 +3,12 @@
 #include <yaml-cpp/yaml.h>
 
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -17,7 +19,10 @@
 #include "pdal/model/error.h"
 #include "pdal/model/json.h"
 #include "pdal/pipeline.h"
+#include "pdal/privacy/human_blur.h"
 #include "pdal/query_engine.h"
+#include "pdal/security/authenticator.h"
+#include "pdal/security/engine_policy_hook.h"
 #include "pdal/security/hooks.h"
 #ifdef PDAL_WITH_AVS
 #include "pdal/storage/avs_storage_backend.h"
@@ -39,6 +44,10 @@ struct AppConfig {
   std::size_t max_concurrent_bulk_queries = 2;
   std::size_t max_live_subscriptions = 8;
   std::size_t live_queue_bytes = 8 * 1024 * 1024;
+  bool auth_present = false;
+  pdal::AuthConfig auth;
+  bool privacy_enabled = true;
+  pdal::HumanBlurConfig human_blur;
   pdal::HttpServerConfig http;
 };
 
@@ -46,6 +55,19 @@ std::filesystem::path ResolvePath(const std::filesystem::path& base,
                                   const std::string& configured) {
   std::filesystem::path path(configured);
   return path.is_absolute() ? path : base / path;
+}
+
+std::string ReadSecretFile(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  if (!input) return {};
+  std::ostringstream out;
+  out << input.rdbuf();
+  std::string value = out.str();
+  while (!value.empty() &&
+         (value.back() == '\n' || value.back() == '\r' || value.back() == ' ')) {
+    value.pop_back();
+  }
+  return value;
 }
 
 AppConfig LoadConfig(const std::filesystem::path& path) {
@@ -65,6 +87,44 @@ AppConfig LoadConfig(const std::filesystem::path& path) {
       runtime["max_live_subscriptions"].as<std::size_t>(8);
   config.live_queue_bytes =
       runtime["live_queue_bytes"].as<std::size_t>(8 * 1024 * 1024);
+  if (const auto auth = root["auth"]) {
+    config.auth_present = true;
+    config.auth.required = auth["required"].as<bool>(true);
+    config.auth.issuer = auth["issuer"].as<std::string>("");
+    config.auth.audience = auth["audience"].as<std::string>("");
+    config.auth.algorithm = auth["algorithm"].as<std::string>("HS256");
+    config.auth.clock_skew_s = auth["clock_skew_s"].as<std::uint64_t>(60);
+    std::string secret;
+    if (const auto env = auth["hmac_secret_env"]) {
+      if (const char* value = std::getenv(env.as<std::string>().c_str())) {
+        secret = value;
+      }
+    }
+    if (secret.empty() && auth["hmac_secret_file"]) {
+      secret = ReadSecretFile(
+          ResolvePath(base, auth["hmac_secret_file"].as<std::string>()));
+    }
+    if (secret.empty() && auth["hmac_secret"]) {
+      secret = auth["hmac_secret"].as<std::string>();
+    }
+    config.auth.hmac_secret = std::move(secret);
+  }
+  if (const auto privacy = root["privacy"]) {
+    config.privacy_enabled = privacy["enabled"].as<bool>(true);
+    if (privacy["model_path"]) {
+      config.human_blur.model_path =
+          ResolvePath(base, privacy["model_path"].as<std::string>()).string();
+    }
+    config.human_blur.score_threshold =
+        privacy["score_threshold"].as<float>(0.25F);
+    config.human_blur.nms_threshold = privacy["nms_threshold"].as<float>(0.45F);
+    config.human_blur.jpeg_quality = privacy["jpeg_quality"].as<int>(90);
+    config.human_blur.blur_sigma = privacy["blur_sigma"].as<double>(30.0);
+    config.human_blur.blur_kernel_divisor =
+        privacy["blur_kernel_divisor"].as<int>(3);
+    config.human_blur.intra_op_threads =
+        privacy["intra_op_threads"].as<int>(2);
+  }
   const auto server = root["server"];
   config.http.address = server["address"].as<std::string>("127.0.0.1");
   config.http.port = server["port"].as<std::uint16_t>(8080);
@@ -77,7 +137,43 @@ AppConfig LoadConfig(const std::filesystem::path& path) {
 struct Runtime {
   std::shared_ptr<pdal::PdalPipeline> pipeline;
   std::shared_ptr<pdal::QueryEngine> query_engine;
+  std::shared_ptr<pdal::Authenticator> authenticator;
 };
+
+std::shared_ptr<pdal::PrivacyStage> BuildPrivacyStage(const AppConfig& config) {
+#ifdef PDAL_WITH_PRIVACY
+  if (!config.privacy_enabled) {
+    std::cerr << "WARNING: camera privacy stage is disabled in config; camera "
+                 "requests will fail closed.\n";
+    return pdal::MakeFailClosedStage("disabled in configuration");
+  }
+  try {
+    auto stage = pdal::MakeHumanBlur(config.human_blur);
+    std::cerr << "camera privacy: human blur active (model "
+              << config.human_blur.model_path << ")\n";
+    return stage;
+  } catch (const std::exception& error) {
+    std::cerr << "WARNING: camera privacy stage failed to initialise ("
+              << error.what() << "); camera requests will fail closed.\n";
+    return pdal::MakeFailClosedStage(error.what());
+  }
+#else
+  (void)config;
+  std::cerr << "WARNING: this build has no camera privacy stage "
+               "(PDAL_WITH_PRIVACY=OFF); camera requests will fail closed.\n";
+  return pdal::MakeFailClosedStage("built without PDAL_WITH_PRIVACY");
+#endif
+}
+
+std::shared_ptr<pdal::Authenticator> BuildAuthenticator(const AppConfig& config) {
+  if (config.auth_present && config.auth.required) {
+    return std::make_shared<pdal::BearerTokenAuthenticator>(config.auth);
+  }
+  std::cerr << "WARNING: pDAL authentication is DISABLED. Identity is taken from "
+               "unverified X-PDAL-* headers. Set an enforced auth: block before "
+               "production use.\n";
+  return std::make_shared<pdal::DevelopmentAuthenticator>();
+}
 
 Runtime BuildRuntime(const AppConfig& config) {
   auto catalog = pdal::ResourceCatalog::LoadYaml(config.resources);
@@ -94,19 +190,25 @@ Runtime BuildRuntime(const AppConfig& config) {
       catalog, config.max_live_subscriptions, config.live_queue_bytes));
 #endif
   auto audit = std::make_shared<pdal::JsonLinesAuditSink>(config.audit_log);
+  // One policy decision, shared by the compatible bulk pipeline and the
+  // operation-oriented QueryEngine.
+  auto policy_engine = std::make_shared<pdal::YamlPolicyEngine>(
+      pdal::YamlPolicyEngine::Load(config.policy));
+  // One privacy stage, shared by both paths. Only camera (image) payloads are
+  // routed through it; GPS/LiDAR stay byte-identical.
+  std::shared_ptr<const pdal::PrivacyStage> privacy = BuildPrivacyStage(config);
   auto pipeline = std::make_shared<pdal::PdalPipeline>(
-      catalog,
-      std::make_shared<pdal::YamlPolicyEngine>(
-          pdal::YamlPolicyEngine::Load(config.policy)),
-      backends, audit,
+      catalog, policy_engine, backends, audit,
       pdal::ContinuationCodec(config.continuation_secret),
-      std::make_shared<pdal::RequestRegistry>());
+      std::make_shared<pdal::RequestRegistry>(), privacy);
+  auto policy_hook =
+      std::make_shared<pdal::EnginePolicyHook>(catalog, policy_engine);
   auto query_engine = std::make_shared<pdal::QueryEngine>(
-      std::move(catalog), backends, live_sources,
-      std::make_shared<pdal::PassThroughPolicy>(),
+      std::move(catalog), backends, live_sources, policy_hook,
       std::make_shared<pdal::NoOpPrivacy>(), audit,
-      config.max_concurrent_bulk_queries);
-  return {std::move(pipeline), std::move(query_engine)};
+      config.max_concurrent_bulk_queries, privacy);
+  return {std::move(pipeline), std::move(query_engine),
+          BuildAuthenticator(config)};
 }
 
 void PutBigEndian(std::uint8_t* output, std::uint64_t value, std::size_t bytes) {
@@ -190,7 +292,9 @@ int main(int argc, char** argv) {
     if (command == "serve") {
       std::cerr << "pDAL listening on " << config.http.address << ':'
                 << config.http.port << '\n';
-      pdal::HttpServer(config.http, runtime.pipeline, runtime.query_engine).Run();
+      pdal::HttpServer(config.http, runtime.pipeline, runtime.query_engine,
+                       runtime.authenticator)
+          .Run();
       return 0;
     }
     if (command == "query") return RunQuery(runtime.pipeline, arguments);

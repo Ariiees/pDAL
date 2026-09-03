@@ -5,3 +5,14 @@
 *.jsonl
 __pycache__/
 *.py[cod]
+
+# Local auth secrets and per-machine login state: never commit
+auth-secret
+session-secret
+/config/auth-secret
+/demo/pi/config/auth-secret
+/demo/pi/config/session-secret
+/demo/pi/config/roles.auth.json
+
+# Platform binaries fetched by scripts/fetch_privacy_deps.sh
+/third_party/onnxruntime/

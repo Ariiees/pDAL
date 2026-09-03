@@ -135,11 +135,15 @@ The default base URL is `http://127.0.0.1:8080/pdal/v1`.
 | `GET` | `/pdal/v1/capabilities` | Capability document |
 | `GET` | `/pdal/v1/requests/{request_id}` | Compatible bulk-request status |
 
+All endpoints below need `--header "Authorization: Bearer ${TOKEN}"` (see the
+bulk example for how to mint one); only `GET /pdal/v1` and
+`GET /pdal/v1/capabilities` are public.
+
 Discovery and description:
 
 ```bash
-curl --fail http://127.0.0.1:8080/pdal/v1/resources
-curl --fail http://127.0.0.1:8080/pdal/v1/resources/camera.front
+curl --fail -H "Authorization: Bearer ${TOKEN}" http://127.0.0.1:8080/pdal/v1/resources
+curl --fail -H "Authorization: Bearer ${TOKEN}" http://127.0.0.1:8080/pdal/v1/resources/camera.front
 ```
 
 Operation-oriented history query:
@@ -148,6 +152,7 @@ Operation-oriented history query:
 curl --fail --request POST \
   http://127.0.0.1:8080/pdal/v1/resources/camera.front/history \
   --header 'Content-Type: application/json' \
+  --header "Authorization: Bearer ${TOKEN}" \
   --data '{
     "time": {
       "start_ns": 1770307702634771758,
@@ -167,11 +172,14 @@ curl --fail --request POST \
 Protected bulk query used by the OEM gateway:
 
 ```bash
+TOKEN=$(demo/scripts/mint_token.py \
+  --secret-file demo/pi/config/auth-secret \
+  --issuer pdal-local-issuer --audience pdal \
+  --subject oem-incident-investigator --role incident_investigator --org oem-demo)
+
 curl --fail --request POST http://127.0.0.1:8080/pdal/v1/query \
   --header 'Content-Type: application/json' \
-  --header 'X-PDAL-Principal: oem-incident-investigator' \
-  --header 'X-PDAL-Organization: oem-demo' \
-  --header 'X-PDAL-Role: incident_investigator' \
+  --header "Authorization: Bearer ${TOKEN}" \
   --data '{
     "purpose": "incident-investigation",
     "resources": ["lidar.top"],
@@ -193,8 +201,8 @@ curl --fail --request POST http://127.0.0.1:8080/pdal/v1/query \
   --output lidar.pdalstream
 ```
 
-These development headers demonstrate policy inputs; they are not production
-authentication. See [Security status](#security-status).
+The `role`, `sub`, and `org` come from the verified token, not from headers. See
+[docs/security.md](docs/security.md).
 
 ### Record-stream wire format
 
@@ -394,15 +402,24 @@ cross port `8090`; decoding and rendering occur on the host.
 
 ## Security status
 
-The compatible `/pdal/v1/query` path enforces the supplied YAML role policy.
-The newer operation-oriented `QueryEngine` has explicit `PolicyHook` and
-`PrivacyHook` positions, currently wired to development-only pass-through/no-op
-implementations. Presentation role headers and the role picker are not a
-production identity provider.
+**Authentication and authorization are enforced.** Every endpoint except
+`GET /pdal/v1` and `GET /pdal/v1/capabilities` requires a signed bearer token
+(`Authorization: Bearer <token>`); `X-PDAL-*` identity headers are ignored.
+Missing, forged, or expired tokens get `401` before any backend access. Both the
+compatible `/pdal/v1/query` path and the operation-oriented `QueryEngine` now
+apply the **same** YAML role policy — role, purpose, resource, time window, and
+record/byte caps — returning `403` before payload access. Full details and setup
+are in [docs/security.md](docs/security.md).
 
-Before production use, implement authenticated principal propagation,
-production policy/privacy hooks, secret management, TLS, and the remaining
-items in [TODO.md](TODO.md).
+**Camera privacy is enforced.** Every returned `camera.front` frame is decoded,
+every detected person is blurred (YOLOv8n + Gaussian blur, in-process on the
+CPU), and the frame is re-encoded before it leaves pDAL — on history, latest,
+and subscribe, on both query paths. GPS/LiDAR stay byte-identical; any failure
+returns no camera bytes.
+
+Still outstanding before production: TLS/mTLS, secret rotation, a permissively
+licensed detector in place of the AGPL YOLOv8n weights, and the remaining items
+in [TODO.md](TODO.md).
 
 ## More documentation
 

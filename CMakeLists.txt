@@ -3,6 +3,7 @@ project(pdal VERSION 0.1.0 LANGUAGES C CXX)
 
 option(PDAL_WITH_AVS "Build the unified AVS historical storage adapter" ON)
 option(PDAL_WITH_ROS_LIVE "Build the ROS 2 live-data source when dependencies are available" ON)
+option(PDAL_WITH_PRIVACY "Build the camera privacy (human blur) stage (needs OpenCV)" ON)
 option(PDAL_BUILD_BENCHMARKS "Build pDAL performance benchmarks" ON)
 set(PDAL_AVS_SOURCE_ROOT "/home/avs/AVS-PI/src/avs" CACHE PATH
     "Path to the AVS ROS package source tree")
@@ -30,6 +31,9 @@ add_library(pdal_core
   src/representation/representation_provider.cpp
   src/adapter/request_translator.cpp
   src/audit/audit.cpp
+  src/security/authenticator.cpp
+  src/security/engine_policy_hook.cpp
+  src/privacy/fail_closed_stage.cpp
   src/pipeline.cpp
   src/query_engine.cpp
   src/sdk/client.cpp
@@ -39,6 +43,32 @@ target_link_libraries(pdal_core
   PUBLIC Boost::json yaml-cpp OpenSSL::Crypto Threads::Threads
 )
 target_compile_options(pdal_core PRIVATE -Wall -Wextra -Wpedantic)
+
+set(PDAL_PRIVACY_AVAILABLE OFF)
+set(PDAL_ONNXRUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime"
+    CACHE PATH "ONNX Runtime prebuilt (headers + lib) for the privacy stage")
+if(PDAL_WITH_PRIVACY)
+  find_package(OpenCV QUIET COMPONENTS core imgproc imgcodecs)
+  find_library(ORT_LIB onnxruntime PATHS "${PDAL_ONNXRUNTIME_ROOT}/lib" NO_DEFAULT_PATH)
+  find_path(ORT_INCLUDE onnxruntime_cxx_api.h
+            PATHS "${PDAL_ONNXRUNTIME_ROOT}/include" NO_DEFAULT_PATH)
+  if(OpenCV_FOUND AND ORT_LIB AND ORT_INCLUDE)
+    add_library(pdal_privacy src/privacy/human_blur.cpp)
+    target_include_directories(pdal_privacy PUBLIC include
+      PRIVATE ${OpenCV_INCLUDE_DIRS} "${ORT_INCLUDE}")
+    target_link_libraries(pdal_privacy PUBLIC pdal_core PRIVATE ${OpenCV_LIBS} "${ORT_LIB}")
+    target_compile_definitions(pdal_privacy PUBLIC PDAL_WITH_PRIVACY=1)
+    target_compile_options(pdal_privacy PRIVATE -Wall -Wextra -Wpedantic)
+    get_filename_component(_ort_libdir "${ORT_LIB}" DIRECTORY)
+    set(CMAKE_BUILD_RPATH "${CMAKE_BUILD_RPATH};${_ort_libdir}")
+    set(PDAL_PRIVACY_AVAILABLE ON)
+  else()
+    message(WARNING "PDAL_WITH_PRIVACY=ON but OpenCV (core/imgproc/imgcodecs) or "
+                    "ONNX Runtime under PDAL_ONNXRUNTIME_ROOT=${PDAL_ONNXRUNTIME_ROOT} "
+                    "was not found. Run scripts/fetch_privacy_deps.sh, or set "
+                    "PDAL_WITH_PRIVACY=OFF. Camera requests will fail closed.")
+  endif()
+endif()
 
 if(PDAL_WITH_AVS)
   if(NOT EXISTS "${PDAL_AVS_SOURCE_ROOT}/include/avs/retrieve_api.h" OR
@@ -129,6 +159,10 @@ if(PDAL_ROS_LIVE_AVAILABLE)
   target_link_libraries(pdal PRIVATE pdal_ros_live)
   target_compile_definitions(pdal PRIVATE PDAL_WITH_ROS_LIVE=1)
 endif()
+if(PDAL_PRIVACY_AVAILABLE)
+  target_link_libraries(pdal PRIVATE pdal_privacy)
+  target_compile_definitions(pdal PRIVATE PDAL_WITH_PRIVACY=1)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
@@ -138,6 +172,28 @@ if(BUILD_TESTING)
   add_test(NAME pdal_tests COMMAND pdal_tests)
   set_tests_properties(pdal_tests PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
+  add_executable(pdal_security_tests tests/security_tests.cpp)
+  target_link_libraries(pdal_security_tests PRIVATE pdal_core OpenSSL::Crypto)
+  target_compile_options(pdal_security_tests PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME pdal_security_tests COMMAND pdal_security_tests)
+  set_tests_properties(pdal_security_tests PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
+  if(PDAL_PRIVACY_AVAILABLE)
+    add_executable(pdal_privacy_tests tests/privacy_tests.cpp)
+    target_link_libraries(pdal_privacy_tests PRIVATE pdal_privacy)
+    target_compile_options(pdal_privacy_tests PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME pdal_privacy_tests COMMAND pdal_privacy_tests)
+    set_tests_properties(pdal_privacy_tests PROPERTIES
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+  endif()
+
+  if(PDAL_WITH_AVS)
+    add_test(NAME pdal_http_auth_smoke
+      COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/http_auth_smoke.sh"
+              "$<TARGET_FILE:pdal>" "${CMAKE_CURRENT_SOURCE_DIR}")
+  endif()
   if(PDAL_WITH_AVS)
     add_executable(pdal_avs_backend_tests tests/avs_backend_tests.cpp)
     target_include_directories(pdal_avs_backend_tests PRIVATE

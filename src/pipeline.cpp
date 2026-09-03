@@ -214,13 +214,15 @@ PdalPipeline::PdalPipeline(ResourceCatalog catalog,
                            std::shared_ptr<const BackendRegistry> backends,
                            std::shared_ptr<AuditSink> audit,
                            ContinuationCodec continuation,
-                           std::shared_ptr<RequestRegistry> registry)
+                           std::shared_ptr<RequestRegistry> registry,
+                           std::shared_ptr<const PrivacyStage> privacy_stage)
     : catalog_(std::move(catalog)),
       policy_(std::move(policy)),
       backends_(std::move(backends)),
       audit_(std::move(audit)),
       continuation_(std::move(continuation)),
-      registry_(std::move(registry)) {
+      registry_(std::move(registry)),
+      privacy_stage_(std::move(privacy_stage)) {
   if (!policy_ || !backends_ || !audit_ || !registry_) {
     throw std::invalid_argument("pDAL pipeline dependencies must not be null");
   }
@@ -409,24 +411,78 @@ std::uint64_t PdalPipeline::Stream(const PreparedQuery& prepared,
                                prepared.request.representation.format == "metadata-only";
     if (!metadata_only) {
       for (const auto& record : prepared.result.records) {
-        if (callbacks.begin_record && !callbacks.begin_record(record)) {
+        const auto& backend = backends_->Get(record.backend_id);
+        const bool anonymize =
+            privacy_stage_ != nullptr &&
+            catalog_.Get(record.resource_id).modality == "image";
+
+        // Camera frames are buffered whole, the humans in them are blurred,
+        // and only the re-encoded frame is emitted. Any failure throws before
+        // a single raw byte reaches the caller (fail closed).
+        std::optional<std::vector<std::uint8_t>> anonymized;
+        if (anonymize) {
+          std::vector<std::uint8_t> raw;
+          raw.reserve(record.payload_size);
+          const auto got = backend.Read(
+              record, [&](const std::uint8_t* data, std::size_t size) {
+                raw.insert(raw.end(), data, data + size);
+                return true;
+              });
+          if (got != record.payload_size || raw.size() != record.payload_size) {
+            throw PdalError(ErrorClass::kPartialRead,
+                            "backend returned an incomplete record");
+          }
+          try {
+            const auto blur_started = std::chrono::steady_clock::now();
+            auto result = privacy_stage_->AnonymizeJpeg(raw.data(), raw.size());
+            audit_->Write(AuditEvent(
+                "frame_anonymized", prepared.request.request_id,
+                {{"resource_id", record.resource_id},
+                 {"regions_blurred", result.regions_blurred},
+                 {"input_bytes", raw.size()},
+                 {"output_bytes", result.jpeg.size()},
+                 {"blur_latency_ms", ElapsedMs(blur_started)}}));
+            anonymized = std::move(result.jpeg);
+          } catch (const std::exception&) {
+            throw PdalError(ErrorClass::kBackendUnavailable,
+                            "camera frame could not be anonymized");
+          }
+          if (returned + anonymized->size() > prepared.result.plan.limits.max_bytes) {
+            break;
+          }
+        }
+
+        BackendRecord header_record = record;
+        if (anonymized) header_record.payload_size = anonymized->size();
+        if (callbacks.begin_record && !callbacks.begin_record(header_record)) {
           throw PdalError(ErrorClass::kBackendUnavailable,
                           "record consumer disconnected");
         }
-        const auto& backend = backends_->Get(record.backend_id);
-        const auto read = backend.Read(record, [&](const std::uint8_t* data, std::size_t size) {
-          if (returned + size > prepared.result.plan.limits.max_bytes) return false;
-          if (callbacks.write_bytes && !callbacks.write_bytes(data, size)) return false;
-          returned += size;
-          return true;
-        });
-        if (read != record.payload_size) {
-          throw PdalError(ErrorClass::kPartialRead,
-                          "backend returned an incomplete record");
+
+        std::uint64_t written = 0;
+        if (anonymized) {
+          if (callbacks.write_bytes &&
+              !callbacks.write_bytes(anonymized->data(), anonymized->size())) {
+            throw PdalError(ErrorClass::kBackendUnavailable,
+                            "record consumer disconnected");
+          }
+          written = anonymized->size();
+          returned += written;
+        } else {
+          written = backend.Read(record, [&](const std::uint8_t* data, std::size_t size) {
+            if (returned + size > prepared.result.plan.limits.max_bytes) return false;
+            if (callbacks.write_bytes && !callbacks.write_bytes(data, size)) return false;
+            returned += size;
+            return true;
+          });
+          if (written != record.payload_size) {
+            throw PdalError(ErrorClass::kPartialRead,
+                            "backend returned an incomplete record");
+          }
         }
         const auto existing = tier_bytes.if_contains(record.storage_tier);
         const auto previous = existing ? existing->to_number<std::uint64_t>() : 0;
-        tier_bytes[record.storage_tier] = previous + read;
+        tier_bytes[record.storage_tier] = previous + written;
         if (callbacks.end_record && !callbacks.end_record()) {
           throw PdalError(ErrorClass::kBackendUnavailable,
                           "record consumer disconnected");

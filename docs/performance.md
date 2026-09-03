@@ -59,3 +59,26 @@ One smoke run used this host's four-core Cortex-A76 (aarch64, 1.5–2.4 GHz, `on
 Cached discovery p50 was 0.003–0.006 ms and describe p50 was 0.00007–0.00011 ms. Process peak RSS during these small runs was about 6.2 MB. HDD tail latency had large I/O/scheduler outliers in both direct and pDAL paths; repeat under controlled cache, thermal, and scheduling conditions before drawing conclusions. The benchmark JSON also records CPU and throughput.
 
 A five-sample live smoke run used the same host and a 50 Hz ROS `GPSFix` publisher. Direct live-source latest p50 was 0.00017 ms; pDAL latest p50 was 0.00474 ms (0.00458 ms framework delta). Direct and pDAL subscription `Next()` p50 values were 20.03 ms and 19.95 ms respectively, dominated by the 20 ms publish period. Creating and cancelling three pDAL subscriptions took 0.0318 ms p50 per batch. ROS/OpenCV/PCL process peak RSS was about 65.5 MB. These small figures validate the harness and routing only; use longer runs and real camera/LiDAR publishers for conclusions.
+
+## Camera privacy (human blur) snapshot (2026-09-01)
+
+Measured **on the Raspberry Pi 5** (Raspberry Pi 5 Model B Rev 1.1, 4× Cortex-A76
+@ 2.4 GHz, `ondemand` governor, Ubuntu 24.04 aarch64), ONNX Runtime 1.20.1 CPU,
+`intra_op_threads: 2`, 15 iterations per frame after a warm run. This is the
+target hardware, not a proxy.
+
+| Frame | Size in | Size out | People | Mean latency |
+|---|---:|---:|---:|---:|
+| KITTI `street_two_people.jpg` (1242×375) | 205 KB | 135 KB | 2 | ~327 ms |
+| AVS `camera.front` (real recording) | 595 KB | 450 KB | 3 | ~352 ms |
+
+Process peak RSS with the stage loaded was ~140 MB (ONNX Runtime + OpenCV
+arenas). Latency is dominated by the 640×640 YOLOv8n forward pass; blur and JPEG
+re-encode are a few ms. Non-camera paths (`position`, `lidar.top`, metadata) do
+not enter the stage, so their p50/p95 are unchanged.
+
+Tuning levers: `intra_op_threads` (2 was best here; 4 did not help for a model
+this small), `jpeg_quality`, and a smaller `input_size` at the cost of
+small-person recall. For a publication-grade result, pin the process, fix the
+governor to `performance`, control thermals, and report blur latency,
+throughput, and peak RSS alongside the non-camera `pdal_avs_benchmark` numbers.

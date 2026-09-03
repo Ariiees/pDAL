@@ -6,6 +6,35 @@ audit_log: /tmp/pdal-audit.jsonl
 # Production deployment should inject and rotate a protected secret.
 continuation_secret: change-this-development-secret
 
+# Caller authentication. Every endpoint except GET /pdal/v1 and
+# GET /pdal/v1/capabilities requires `Authorization: Bearer <token>`.
+# The token is a compact HS256 JWS; pDAL verifies signature, issuer,
+# audience, and expiry, then builds the principal from the sub/role/org
+# claims. X-PDAL-* identity headers are ignored.
+auth:
+  required: true
+  issuer: pdal-local-issuer
+  audience: pdal
+  algorithm: HS256
+  # Secret resolution order: this env var, then hmac_secret_file, then
+  # the inline hmac_secret below. Must be at least 16 bytes.
+  hmac_secret_env: PDAL_AUTH_SECRET
+  hmac_secret: change-this-development-auth-secret
+  clock_skew_s: 60
+
+# Camera privacy. Every returned camera.front JPEG is decoded, every detected
+# person is blurred, and the frame is re-encoded before it leaves pDAL.
+# GPS/LiDAR and metadata-only requests are untouched. Any failure returns no
+# camera bytes (fail closed).
+privacy:
+  enabled: true
+  model_path: ../models/yolov8n.onnx   # YOLOv8n ONNX, relative to this file
+  score_threshold: 0.25
+  nms_threshold: 0.45
+  jpeg_quality: 90
+  blur_sigma: 30
+  blur_kernel_divisor: 3
+
 storage:
   ssd_root: /home/avs/DATA/SSD
   hdd_root: /home/avs/DATA/HDD

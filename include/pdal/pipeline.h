@@ -13,6 +13,7 @@
 #include "pdal/model/types.h"
 #include "pdal/planner/query_planner.h"
 #include "pdal/policy/policy_engine.h"
+#include "pdal/privacy/privacy_stage.h"
 #include "pdal/representation/representation_provider.h"
 #include "pdal/storage/storage_backend.h"
 
@@ -78,7 +79,8 @@ class PdalPipeline {
                std::shared_ptr<const BackendRegistry> backends,
                std::shared_ptr<AuditSink> audit,
                ContinuationCodec continuation,
-               std::shared_ptr<RequestRegistry> registry);
+               std::shared_ptr<RequestRegistry> registry,
+               std::shared_ptr<const PrivacyStage> privacy_stage = nullptr);
 
   PreparedQuery Prepare(PdalRequest request) const;
   std::uint64_t Stream(const PreparedQuery& prepared,
@@ -95,6 +97,7 @@ class PdalPipeline {
   std::shared_ptr<AuditSink> audit_;
   ContinuationCodec continuation_;
   std::shared_ptr<RequestRegistry> registry_;
+  std::shared_ptr<const PrivacyStage> privacy_stage_;
   QueryPlanner planner_;
   RepresentationProvider representations_;
 };

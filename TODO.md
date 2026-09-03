@@ -12,6 +12,36 @@ Implement only:
 TLS, storage encryption, consent, retention, and other security work are out of
 scope.
 
+## Status
+
+- **Authentication — implemented.** Signed HS256 bearer tokens; `X-PDAL-*`
+  ignored; 401 before backend access on both query paths. Public: `GET /pdal/v1`,
+  `GET /pdal/v1/capabilities`.
+- **Authorization — implemented.** One `YamlPolicyEngine` decision shared by
+  `PdalPipeline` and `QueryEngine` (via `EnginePolicyHook`); 403 before
+  `OpenHistory` / `ReadPayload` / live `Subscribe`; policies only narrow.
+- **Privacy blur — implemented.** In-process pixel stage
+  (`include/pdal/privacy/`, `src/privacy/human_blur.cpp`): YOLOv8n person
+  detection (ONNX Runtime, CPU) + Gaussian blur + JPEG re-encode, run after
+  `ReadPayload` / before `DataSample` in `QueryEngine` and before the callbacks
+  in `PdalPipeline::Stream`. History, latest, and subscribe. GPS/LiDAR
+  byte-identical; metadata-only skips it; any failure returns no camera bytes.
+  Not `PrivacyHook` (that still narrows `DataQuery` only, as `NoOpPrivacy`).
+- **Demo security surface — implemented (device side).** Gateway per-role
+  password login (`POST /api/login` → signed session), lockout, short-TTL mode,
+  `GET /api/access` policy matrix, and `demo/scripts/security_demo.sh`.
+
+See [docs/security.md](docs/security.md). Device-side code and tests
+(`pdal_security_tests`, `pdal_privacy_tests`, `pdal_http_auth_smoke`,
+`demo/scripts/security_demo.sh`) are on `pDAL`. Host-side work (login screen,
+access panel, proxy/token handling, smoke test) is specified in
+[demo/HOST_SECURITY_TODO.md](demo/HOST_SECURITY_TODO.md) for the `host` branch.
+
+Built and measured on the Raspberry Pi 5 itself (Cortex-A76 @ 2.4 GHz): blur
+~0.33 s/frame, peak RSS ~140 MB, non-camera paths unchanged. Follow-ups:
+replace the AGPL YOLOv8n weights with a permissively licensed detector; add a
+live-path `frame_anonymized` audit event; a governor-pinned publication run.
+
 ## Read before coding
 
 Read every `docs/*.md`, then `README.md`, `IMPLEMENTATION_PLAN.md`, and

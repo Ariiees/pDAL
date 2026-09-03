@@ -8,8 +8,12 @@ record parsing and rendering belong to the host viewer.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import sqlite3
 import sys
 import threading
@@ -64,10 +68,184 @@ class UpstreamError(Exception):
         self.headers = headers or {}
 
 
+class Unauthorized(Exception):
+    """Raised when a request has no valid role session."""
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+class PasswordStore:
+    """Per-role demo passwords, checked against PBKDF2-HMAC-SHA256 hashes."""
+
+    def __init__(self, entries: dict[str, str]):
+        self._entries = entries
+
+    @classmethod
+    def from_file(cls, path: Path) -> "PasswordStore":
+        data = json.loads(path.read_text(encoding="utf-8"))
+        roles = data.get("roles", {})
+        if not isinstance(roles, dict) or not roles:
+            raise ValueError(f"{path} has no non-empty 'roles' map")
+        return cls({str(key): str(value) for key, value in roles.items()})
+
+    def known_role(self, role: str) -> bool:
+        return role in self._entries
+
+    def verify(self, role: str, password: str) -> bool:
+        stored = self._entries.get(role)
+        if not stored:
+            return False
+        try:
+            scheme, iterations, salt_b64, hash_b64 = stored.split("$", 3)
+        except ValueError:
+            return False
+        if scheme != "pbkdf2_sha256":
+            return False
+        derived = hashlib.pbkdf2_hmac(
+            "sha256", password.encode(), _b64url_decode(salt_b64), int(iterations)
+        )
+        return hmac.compare_digest(derived, _b64url_decode(hash_b64))
+
+
+class LoginThrottle:
+    """Locks a role for a cooldown window after repeated failed logins."""
+
+    def __init__(self, max_attempts: int = 5, cooldown_seconds: int = 60):
+        self.max_attempts = max_attempts
+        self.cooldown_seconds = cooldown_seconds
+        self._state: dict[str, tuple[int, float]] = {}
+        self._lock = threading.Lock()
+
+    def locked_for(self, role: str) -> float:
+        with self._lock:
+            count, until = self._state.get(role, (0, 0.0))
+            remaining = until - time.time()
+            if count >= self.max_attempts and remaining > 0:
+                return remaining
+            return 0.0
+
+    def record_failure(self, role: str) -> None:
+        with self._lock:
+            count, _ = self._state.get(role, (0, 0.0))
+            self._state[role] = (count + 1, time.time() + self.cooldown_seconds)
+
+    def record_success(self, role: str) -> None:
+        with self._lock:
+            self._state.pop(role, None)
+
+
+class SessionStore:
+    """Issues and verifies signed, expiring session tokens bound to a role."""
+
+    def __init__(self, secret: bytes):
+        self._secret = secret
+        self._lock = threading.Lock()
+        self._revoked: set[str] = set()
+
+    def issue(self, role: str, ttl_seconds: int) -> tuple[str, int]:
+        issued = int(time.time())
+        payload = {
+            "role": role,
+            "iat": issued,
+            "exp": issued + ttl_seconds,
+            "jti": _b64url(secrets.token_bytes(9)),
+        }
+        raw = _b64url(json.dumps(payload, separators=(",", ":")).encode())
+        signature = hmac.new(self._secret, raw.encode(), hashlib.sha256).digest()
+        return raw + "." + _b64url(signature), ttl_seconds
+
+    def verify(self, token: str) -> dict[str, Any] | None:
+        try:
+            raw, signature_b64 = token.split(".", 1)
+        except ValueError:
+            return None
+        expected = hmac.new(self._secret, raw.encode(), hashlib.sha256).digest()
+        try:
+            if not hmac.compare_digest(_b64url_decode(signature_b64), expected):
+                return None
+            payload = json.loads(_b64url_decode(raw))
+        except Exception:
+            return None
+        if not isinstance(payload, dict) or "role" not in payload:
+            return None
+        if int(payload.get("exp", 0)) < int(time.time()):
+            return None
+        with self._lock:
+            if payload.get("jti") in self._revoked:
+                return None
+        return payload
+
+    def revoke(self, token: str) -> None:
+        payload = self.verify(token)
+        if payload and payload.get("jti"):
+            with self._lock:
+                self._revoked.add(payload["jti"])
+
+
+class TokenMinter:
+    """Signs short-lived HS256 bearer tokens for pDAL, one per demo role.
+
+    The demo signs its own tokens with the same secret pDAL verifies. A real
+    deployment would obtain these from an identity provider instead.
+    """
+
+    def __init__(
+        self, secret: str, *, issuer: str, audience: str, ttl_seconds: int = 900
+    ):
+        if len(secret) < 16:
+            raise ValueError("auth secret must be at least 16 bytes")
+        self._secret = secret.encode()
+        self._issuer = issuer
+        self._audience = audience
+        self._ttl = ttl_seconds
+        self._cache: dict[str, tuple[str, float]] = {}
+
+    def for_role(self, role: str) -> str:
+        cached = self._cache.get(role)
+        now = time.time()
+        if cached and cached[1] - 30 > now:
+            return cached[0]
+        profile = role_profile(role)
+        issued = int(now)
+        header = {"alg": "HS256", "typ": "JWT"}
+        payload = {
+            "iss": self._issuer,
+            "aud": self._audience,
+            "sub": profile["principal"],
+            "role": role,
+            "org": "oem-demo",
+            "iat": issued,
+            "exp": issued + self._ttl,
+        }
+        signing_input = (
+            _b64url(json.dumps(header, separators=(",", ":")).encode())
+            + "."
+            + _b64url(json.dumps(payload, separators=(",", ":")).encode())
+        )
+        signature = hmac.new(
+            self._secret, signing_input.encode(), hashlib.sha256
+        ).digest()
+        token = signing_input + "." + _b64url(signature)
+        self._cache[role] = (token, issued + self._ttl)
+        return token
+
+
 class PdalClient:
-    def __init__(self, base_url: str, timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float = 30.0,
+        minter: TokenMinter | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.minter = minter
 
     def health(self) -> dict[str, Any]:
         body, _, _ = self._request("GET", "/pdal/v1")
@@ -102,12 +280,9 @@ class PdalClient:
                 "max_bytes": max_bytes,
             },
         }
-        headers = {
-            "Content-Type": "application/json",
-            "X-PDAL-Principal": profile["principal"],
-            "X-PDAL-Organization": "oem-demo",
-            "X-PDAL-Role": role,
-        }
+        headers = {"Content-Type": "application/json"}
+        if self.minter is not None:
+            headers["Authorization"] = f"Bearer {self.minter.for_role(role)}"
         return self._request(
             "POST", "/pdal/v1/query", json.dumps(request).encode(), headers
         )
@@ -294,6 +469,31 @@ class DemoService:
         probe = trips[0]
         access = self.access_matrix(role, probe)
         return {"role": role, "access": access, "recordings": trips}
+
+    def access_report(self, role: str, trip_id: str | None = None) -> dict[str, Any]:
+        """Per-resource allow/deny for `role`, each cell decided by a real pDAL
+        call. Feeds the viewer's access-and-policy panel."""
+        profile = role_profile(role)
+        trips = self.catalog.scan()
+        if not trips:
+            return {"role": role, "resources": {}, "recordings": 0}
+        trip = self.catalog.by_id(trip_id) if trip_id else trips[0]
+        matrix = self.access_matrix(role, trip)
+        resources = {
+            resource: {
+                "label": RESOURCE_INFO[resource]["label"],
+                **cell,
+            }
+            for resource, cell in matrix.items()
+        }
+        return {
+            "role": role,
+            "label": profile["label"],
+            "purpose": profile["purpose"],
+            "principal": profile["principal"],
+            "trip_id": trip["id"],
+            "resources": resources,
+        }
 
     def access_matrix(self, role: str, trip: dict[str, Any]) -> dict[str, Any]:
         output = {}
@@ -504,10 +704,127 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def service(self) -> DemoService:
         return self.server.service  # type: ignore[attr-defined]
 
+    def _bearer(self) -> str:
+        value = self.headers.get("Authorization", "")
+        return value[7:].strip() if value.lower().startswith("bearer ") else ""
+
+    def _session(self) -> dict[str, Any] | None:
+        sessions = getattr(self.server, "sessions", None)  # type: ignore[attr-defined]
+        token = self._bearer()
+        return sessions.verify(token) if sessions is not None and token else None
+
+    # The role for a data request comes from the verified session token, never
+    # from a query parameter, unless --allow-legacy-role is set.
+    def _client_role(self, query: dict[str, list[str]]) -> str:
+        payload = self._session()
+        if payload:
+            return str(payload["role"])
+        if getattr(self.server, "allow_legacy_role", False) and query.get("role"):
+            return query["role"][0]
+        raise Unauthorized("sign in to a role at POST /api/login")
+
+    def do_POST(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        try:
+            if parsed.path == "/api/login":
+                self._handle_login()
+            elif parsed.path == "/api/logout":
+                sessions = getattr(self.server, "sessions", None)  # type: ignore[attr-defined]
+                token = self._bearer()
+                if sessions is not None and token:
+                    sessions.revoke(token)
+                self._json(200, {"ok": True})
+            else:
+                self._json(404, {"error": "endpoint not found"})
+        except Unauthorized as error:
+            self._json(401, {"error": str(error)})
+        except (ValueError, KeyError) as error:
+            self._json(400, {"error": str(error)})
+        except Exception as error:  # noqa: BLE001
+            print(f"gateway error: {error}", file=sys.stderr)
+            self._json(502, {"error": "Pi gateway could not complete the request"})
+
+    def _handle_login(self) -> None:
+        sessions = getattr(self.server, "sessions", None)  # type: ignore[attr-defined]
+        passwords = getattr(self.server, "passwords", None)  # type: ignore[attr-defined]
+        throttle = getattr(self.server, "throttle", None)  # type: ignore[attr-defined]
+        if sessions is None or passwords is None or throttle is None:
+            self._json(503, {"error": "role login is not configured on this gateway"})
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except Exception as error:  # noqa: BLE001
+            raise ValueError("request body must be JSON") from error
+        role = str(payload.get("role", ""))
+        password = str(payload.get("password", ""))
+        if not role or not password:
+            raise ValueError("role and password are required")
+
+        locked = throttle.locked_for(role)
+        if locked > 0:
+            self._json(
+                429,
+                {"error": "too many failed attempts", "retry_after_seconds": int(locked) + 1},
+            )
+            return
+        # One response for "no such role" and "wrong password": do not disclose
+        # which roles exist.
+        if (
+            not passwords.known_role(role)
+            or role not in ROLE_INFO
+            or not passwords.verify(role, password)
+        ):
+            throttle.record_failure(role)
+            self._json(401, {"error": "invalid role or password"})
+            return
+        throttle.record_success(role)
+
+        default_ttl = getattr(self.server, "session_ttl", 900)  # type: ignore[attr-defined]
+        max_ttl = getattr(self.server, "session_max_ttl", 3600)  # type: ignore[attr-defined]
+        requested = payload.get("ttl_seconds")
+        ttl = default_ttl
+        if isinstance(requested, (int, float)) and requested > 0:
+            ttl = int(requested)
+        ttl = max(30, min(ttl, max_ttl))
+        token, expires_in = sessions.issue(role, ttl)
+        profile = ROLE_INFO[role]
+        self._json(
+            200,
+            {
+                "token": token,
+                "role": role,
+                "label": profile["label"],
+                "purpose": profile["purpose"],
+                "expires_in": expires_in,
+            },
+        )
+
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         query = urllib.parse.parse_qs(parsed.query)
         try:
+            if parsed.path == "/api/session":
+                payload = self._session()
+                if not payload:
+                    self._json(401, {"authenticated": False})
+                    return
+                profile = ROLE_INFO.get(payload["role"], {})
+                self._json(
+                    200,
+                    {
+                        "authenticated": True,
+                        "role": payload["role"],
+                        "label": profile.get("label", payload["role"]),
+                        "purpose": profile.get("purpose", ""),
+                        "expires_in": max(0, int(payload["exp"]) - int(time.time())),
+                    },
+                )
+                return
+            if parsed.path == "/api/access":
+                role = self._client_role(query)
+                self._json(200, self.service.access_report(role, optional(query, "trip", "") or None))
+                return
             if parsed.path == "/api/health":
                 pdal_health = self.service.pdal.health()
                 self._json(
@@ -528,15 +845,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     },
                 )
             elif parsed.path == "/api/trips":
-                self._json(200, self.service.trips(required(query, "role")))
+                self._json(200, self.service.trips(self._client_role(query)))
             elif parsed.path == "/api/timeline":
                 self._json(
                     200,
-                    self.service.timeline(required(query, "role"), required(query, "trip")),
+                    self.service.timeline(self._client_role(query), required(query, "trip")),
                 )
             elif parsed.path == "/api/history":
                 body, headers, status = self.service.history(
-                    required(query, "role"),
+                    self._client_role(query),
                     required(query, "trip"),
                     required(query, "resource"),
                     int(required(query, "start_ns")),
@@ -547,7 +864,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._bytes(status, body, headers)
             elif parsed.path == "/api/closest":
                 body, headers, status = self.service.closest(
-                    required(query, "role"),
+                    self._client_role(query),
                     required(query, "trip"),
                     required(query, "resource"),
                     int(required(query, "t_ns")),
@@ -555,13 +872,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._bytes(status, body, headers)
             elif parsed.path == "/api/denial-proof":
                 status, result = self.service.denial_probe(
-                    required(query, "role"),
+                    self._client_role(query),
                     required(query, "trip"),
                     required(query, "resource"),
                 )
                 self._json(status, result)
             else:
                 self._json(404, {"error": "endpoint not found"})
+        except Unauthorized as error:
+            self._json(401, {"error": str(error)})
         except UpstreamError as error:
             headers = {"X-Demo-Policy-Decision": "denied"}
             self._bytes(
@@ -618,8 +937,108 @@ def main() -> int:
     parser.add_argument("--pdal-url", default=os.environ.get("PDAL_URL", "http://127.0.0.1:8080"))
     parser.add_argument("--ssd-root", type=Path, default=Path("/home/avs/DATA/SSD"))
     parser.add_argument("--hdd-root", type=Path, default=Path("/home/avs/DATA/HDD"))
+    parser.add_argument(
+        "--auth-secret",
+        default=os.environ.get("DEMO_PDAL_AUTH_SECRET", ""),
+        help="HS256 secret pDAL verifies; enables bearer tokens to pDAL",
+    )
+    parser.add_argument(
+        "--auth-secret-file",
+        default=os.environ.get("DEMO_PDAL_AUTH_SECRET_FILE", ""),
+        help="file holding the HS256 secret (overrides --auth-secret if set)",
+    )
+    parser.add_argument("--auth-issuer", default="pdal-local-issuer")
+    parser.add_argument("--auth-audience", default="pdal")
+    parser.add_argument(
+        "--roles-auth-file",
+        default=os.environ.get(
+            "DEMO_ROLES_AUTH_FILE",
+            str(Path(__file__).resolve().parent / "config" / "roles.auth.json"),
+        ),
+        help="JSON file of per-role PBKDF2 password hashes; enables POST /api/login",
+    )
+    parser.add_argument(
+        "--session-secret-file",
+        default=os.environ.get("DEMO_SESSION_SECRET_FILE", ""),
+        help="file holding the session-signing secret (default: random per start)",
+    )
+    parser.add_argument("--session-ttl", type=int, default=900)
+    parser.add_argument("--session-max-ttl", type=int, default=3600)
+    parser.add_argument(
+        "--short-ttl",
+        action="store_true",
+        help="demo mode: issue 60 s sessions so expiry is easy to show",
+    )
+    parser.add_argument(
+        "--allow-legacy-role",
+        action="store_true",
+        help="also accept ?role= without a session (transition aid; insecure)",
+    )
     args = parser.parse_args()
-    service = DemoService(PdalClient(args.pdal_url), TripCatalog(args.ssd_root, args.hdd_root))
+
+    secret = ""
+    if args.auth_secret_file:
+        secret = Path(args.auth_secret_file).read_text(encoding="utf-8").strip()
+    elif args.auth_secret:
+        secret = args.auth_secret
+    minter = (
+        TokenMinter(secret, issuer=args.auth_issuer, audience=args.auth_audience)
+        if secret
+        else None
+    )
+    if minter is None:
+        print(
+            "WARNING: no auth secret provided; requests to pDAL will be "
+            "unauthenticated and will fail if pDAL enforces auth.",
+            file=sys.stderr,
+        )
+
+    passwords: PasswordStore | None = None
+    throttle: LoginThrottle | None = None
+    sessions: SessionStore | None = None
+    session_ttl = 60 if args.short_ttl else args.session_ttl
+    session_max_ttl = 120 if args.short_ttl else args.session_max_ttl
+    roles_auth_path = Path(args.roles_auth_file)
+    if roles_auth_path.is_file():
+        try:
+            passwords = PasswordStore.from_file(roles_auth_path)
+            config = json.loads(roles_auth_path.read_text(encoding="utf-8"))
+        except Exception as error:  # noqa: BLE001
+            print(f"cannot load {roles_auth_path}: {error}", file=sys.stderr)
+            return 1
+        lockout = config.get("lockout", {}) if isinstance(config, dict) else {}
+        throttle = LoginThrottle(
+            int(lockout.get("max_attempts", 5)),
+            int(lockout.get("cooldown_seconds", 60)),
+        )
+        if not args.short_ttl:
+            session_ttl = int(config.get("session_ttl_seconds", session_ttl))
+            session_max_ttl = int(config.get("session_max_ttl_seconds", session_max_ttl))
+        secret_bytes = (
+            Path(args.session_secret_file).read_bytes().strip()
+            if args.session_secret_file
+            else secrets.token_bytes(32)
+        )
+        sessions = SessionStore(secret_bytes)
+    elif not args.allow_legacy_role:
+        print(
+            f"role login file not found: {roles_auth_path}\n"
+            "Create it (start_pi.sh does this from roles.auth.example.json) or "
+            "pass --allow-legacy-role for an insecure transition mode.",
+            file=sys.stderr,
+        )
+        return 1
+    else:
+        print(
+            "WARNING: no role login file; running with --allow-legacy-role. "
+            "Any caller can pick any role via ?role=.",
+            file=sys.stderr,
+        )
+
+    service = DemoService(
+        PdalClient(args.pdal_url, minter=minter),
+        TripCatalog(args.ssd_root, args.hdd_root),
+    )
     try:
         health = service.pdal.health()
     except Exception as error:
@@ -627,9 +1046,19 @@ def main() -> int:
         return 1
     server = ThreadingHTTPServer((args.address, args.port), GatewayHandler)
     server.service = service  # type: ignore[attr-defined]
+    server.passwords = passwords  # type: ignore[attr-defined]
+    server.throttle = throttle  # type: ignore[attr-defined]
+    server.sessions = sessions  # type: ignore[attr-defined]
+    server.session_ttl = session_ttl  # type: ignore[attr-defined]
+    server.session_max_ttl = session_max_ttl  # type: ignore[attr-defined]
+    server.allow_legacy_role = args.allow_legacy_role  # type: ignore[attr-defined]
     print(
         f"Pi gateway listening on http://{args.address}:{args.port} "
-        f"(pDAL {health.get('api_version', 'unknown')}; decoding disabled)",
+        f"(pDAL {health.get('api_version', 'unknown')}; decoding disabled; "
+        f"tokens {'on' if minter else 'off'}; "
+        f"role login {'on' if sessions else 'off'}; "
+        f"session ttl {session_ttl}s"
+        f"{'; legacy ?role= allowed' if args.allow_legacy_role else ''})",
         file=sys.stderr,
     )
     try:

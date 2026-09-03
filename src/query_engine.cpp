@@ -53,6 +53,27 @@ bool IsNarrower(const DataQuery& original, const DataQuery& effective) {
   return true;
 }
 
+// Live-path blur: replace a camera sample's JPEG payload with a blurred one.
+// Any failure throws so the caller emits nothing (fail closed).
+void AnonymizeLiveSample(const PrivacyStage* privacy, bool image_modality,
+                         DataSample& sample) {
+  if (privacy == nullptr || !image_modality || !sample.payload ||
+      sample.payload->empty()) {
+    return;
+  }
+  try {
+    auto anon = privacy->AnonymizeJpeg(sample.payload->data(),
+                                       sample.payload->size());
+    sample.payload = std::make_shared<const std::vector<std::uint8_t>>(
+        std::move(anon.jpeg));
+  } catch (const std::exception&) {
+    throw PdalError(ErrorClass::kBackendUnavailable,
+                    "camera frame could not be anonymized");
+  }
+  sample.metadata["payload_size"] =
+      static_cast<std::uint64_t>(sample.payload->size());
+}
+
 }  // namespace
 
 struct QueryEngine::BulkGate {
@@ -82,12 +103,14 @@ QueryEngine::QueryEngine(
     std::shared_ptr<const PolicyHook> policy_hook,
     std::shared_ptr<const PrivacyHook> privacy_hook,
     std::shared_ptr<AuditSink> audit,
-    std::size_t max_concurrent_bulk_queries)
+    std::size_t max_concurrent_bulk_queries,
+    std::shared_ptr<const PrivacyStage> privacy_stage)
     : catalog_(std::move(catalog)),
       historical_backends_(std::move(historical_backends)),
       live_sources_(std::move(live_sources)),
       policy_hook_(std::move(policy_hook)),
       privacy_hook_(std::move(privacy_hook)),
+      privacy_stage_(std::move(privacy_stage)),
       audit_(std::move(audit)),
       bulk_gate_(std::make_shared<BulkGate>(max_concurrent_bulk_queries)) {
   if (!historical_backends_ || !live_sources_ || !policy_hook_ ||
@@ -176,6 +199,8 @@ DataResult QueryEngine::Execute(DataQuery query) const {
   audit_->Write(AuditEvent("data_query_routed", query.request_id,
                            {{"resource_id", query.resource},
                             {"operation", OperationName(query.operation)},
+                            {"principal_id", query.context.principal.principal_id},
+                            {"purpose", query.context.purpose},
                             {"resource_resolution_latency_us",
                              static_cast<std::uint64_t>(
                                  std::chrono::duration_cast<std::chrono::microseconds>(
@@ -204,6 +229,8 @@ DataResult QueryEngine::Execute(DataQuery query) const {
                       "live source failed while reading the latest sample");
     }
     if (!sample) throw PdalError(ErrorClass::kNoData, "no live sample is available");
+    AnonymizeLiveSample(privacy_stage_.get(), resource.modality == "image",
+                        *sample);
     audit_->Write(AuditEvent(
         "latest_sample_ready", query.request_id,
         {{"setup_latency_us", static_cast<std::uint64_t>(
@@ -286,7 +313,9 @@ DataResult QueryEngine::Execute(DataQuery query) const {
     return {query.request_id, query.resource, query.operation, negotiated.format,
             std::nullopt,
             DataStream(
-                [state]() -> std::optional<DataSample> {
+                [state, privacy = privacy_stage_,
+                 image = resource.modality == "image"]()
+                    -> std::optional<DataSample> {
                   try {
                     for (;;) {
                       auto sample = state->stream.Next();
@@ -306,6 +335,7 @@ DataResult QueryEngine::Execute(DataQuery query) const {
                            sample->timestamp_ns - state->last_timestamp_ns >=
                                state->minimum_period_ns);
                       if (!every_n || !frequency) continue;
+                      AnonymizeLiveSample(privacy.get(), image, *sample);
                       state->last_timestamp_ns = sample->timestamp_ns;
                       ++state->delivered;
                       state->bytes += sample->payload ? sample->payload->size() : 0;
@@ -412,6 +442,8 @@ DataResult QueryEngine::Execute(DataQuery query) const {
     std::uint64_t last_timestamp_ns = 0;
     std::uint64_t minimum_period_ns = 0;
     std::uint64_t storage_read_latency_us = 0;
+    std::shared_ptr<const PrivacyStage> privacy;
+    bool image_modality = false;
     boost::json::object tier_bytes;
     std::atomic_bool released{false};
     std::chrono::steady_clock::time_point stream_started;
@@ -439,6 +471,8 @@ DataResult QueryEngine::Execute(DataQuery query) const {
       query.resource, negotiated.format, ContentType(resource, negotiated.format),
       query.options.max_bytes, query.options.max_records, query.options.sampling,
       negotiated.format == "metadata");
+  state->privacy = privacy_stage_;
+  state->image_modality = resource.modality == "image";
   DataStream stream(
       [state]() -> std::optional<DataSample> {
         try {
@@ -482,18 +516,42 @@ DataResult QueryEngine::Execute(DataQuery query) const {
                               {{"resource_id", state->resource_id},
                                {"timestamp_ns", record->timestamp_ns}});
             }
+            if (state->privacy && state->image_modality) {
+              try {
+                const auto blur_started = std::chrono::steady_clock::now();
+                auto anon = state->privacy->AnonymizeJpeg(payload->data(),
+                                                          payload->size());
+                state->audit->Write(AuditEvent(
+                    "frame_anonymized", state->request_id,
+                    {{"resource_id", state->resource_id},
+                     {"regions_blurred", anon.regions_blurred},
+                     {"input_bytes", payload->size()},
+                     {"output_bytes", anon.jpeg.size()},
+                     {"blur_latency_us", static_cast<std::uint64_t>(
+                          std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::steady_clock::now() - blur_started)
+                              .count())}}));
+                payload = std::make_shared<const std::vector<std::uint8_t>>(
+                    std::move(anon.jpeg));
+              } catch (const std::exception&) {
+                throw PdalError(ErrorClass::kBackendUnavailable,
+                                "camera frame could not be anonymized");
+              }
+            }
             state->returned_bytes += payload->size();
             const auto* existing = state->tier_bytes.if_contains(record->storage_tier);
             state->tier_bytes[record->storage_tier] =
                 (existing ? existing->to_number<std::uint64_t>() : 0) +
                 payload->size();
           }
+          const std::uint64_t reported_size =
+              state->metadata_only ? record->payload_size : payload->size();
           ++state->records_returned;
           state->last_timestamp_ns = record->timestamp_ns;
           return DataSample{state->resource_id, record->timestamp_ns,
                             state->representation, state->content_type,
                             std::move(payload),
-                            {{"payload_size", record->payload_size}}};
+                            {{"payload_size", reported_size}}};
         } catch (const PdalError&) {
           state->Release();
           throw;

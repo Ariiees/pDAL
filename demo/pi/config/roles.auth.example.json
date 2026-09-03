@@ -1,0 +1,11 @@
+{
+  "comment": "Per-role demo login. start_pi.sh copies this to roles.auth.json if that file is absent. Regenerate hashes with demo/scripts/hash_password.py. Demo plaintext passwords: fleet_analyst=fleet-demo, service_technician=service-demo, incident_investigator=incident-demo",
+  "session_ttl_seconds": 900,
+  "session_max_ttl_seconds": 3600,
+  "lockout": { "max_attempts": 5, "cooldown_seconds": 60 },
+  "roles": {
+    "fleet_analyst": "pbkdf2_sha256$200000$IBPZh8VLkUT0birUOLnliQ$ddBNEJgy3Gyf6WJpML2o-OEC03RX9bjl4DwfKFZylp4",
+    "service_technician": "pbkdf2_sha256$200000$ZChd3i5W_9MREqXRfLhZMA$GMLU-8A0kR_nVdy8sYlkNwtZI5GBL7J1y_QwborSQQA",
+    "incident_investigator": "pbkdf2_sha256$200000$PD2cnZQ0pZv__Qs4CjHtbw$XWF8-9dVWEABC5SXcFSnXtRmjYnuvIcsW0HA1I0YTew"
+  }
+}

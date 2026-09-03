@@ -13,7 +13,10 @@ This file records the implemented module mapping. The pre-change gap analysis an
 | Live boundary | `ILiveDataSource` and registry |
 | Live implementation | optional `RosLiveDataSource` with typed callbacks and byte-bounded queues |
 | Bindings | native REST, local CLI, and experimental SOVD translator converge on semantic query types |
-| Security extension | `PolicyHook` then `PrivacyHook`; development-only pass-through/no-op implementations |
+| Authentication | `Authenticator` in the HTTP layer; `BearerTokenAuthenticator` (HS256 JWT: signature, `iss`, `aud`, `exp`; principal from `sub`/`role`/`org`); 401 before dispatch; `X-PDAL-*` ignored |
+| Authorization | one `YamlPolicyEngine` shared by `PdalPipeline` and `QueryEngine` via `EnginePolicyHook` (narrow-only, enforced before backend access) |
+| Security extension | `PolicyHook` production `EnginePolicyHook`; `PrivacyHook` still development-only `NoOpPrivacy` (narrows `DataQuery` only) |
+| Camera privacy | in-process `PrivacyStage` (`src/privacy/human_blur.cpp`): YOLOv8n person detection via ONNX Runtime + Gaussian blur + JPEG re-encode, after `ReadPayload` / before `DataSample` on both paths; fail closed; GPS/LiDAR untouched |
 | Compatibility | retained multi-resource `PdalRequest`/`PdalPipeline`, YAML policy, continuation, status, and binary framing |
 | Verification | semantic/routing/isolation tests, synthetic hot/cold test, sanitizers, ROS/AVS builds, direct-AVS benchmark |
 

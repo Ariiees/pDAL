@@ -63,7 +63,15 @@ Storage and live exceptions are mapped to stable pDAL errors. Short payloads are
 
 ## Security, observability, and future extensions
 
-Policy/privacy hooks execute after semantic validation and resource resolution but before physical access. Their current operation-oriented implementations are explicitly development-only. The legacy YAML policy path continues to narrow resources, range, representation, records, and bytes.
+The HTTP layer authenticates the caller before dispatch: every endpoint except
+`GET /pdal/v1` and `GET /pdal/v1/capabilities` requires an `HS256` bearer token,
+and the `Principal` is built only from verified `sub` / `role` / `org` claims.
+Policy/privacy hooks execute after semantic validation and resource resolution
+but before physical access. The policy hook (`EnginePolicyHook`) delegates to the
+same `YamlPolicyEngine` used by the legacy bulk path, so both paths enforce one
+role/purpose/resource/time/record/byte decision and deny with `403` before
+`OpenHistory`, `ReadPayload`, or a live subscription. The privacy hook is still
+the development `NoOpPrivacy`. See [security.md](security.md).
 
 Audit events use a single request ID and record control/setup latency, selected/considered records, read/returned bytes, internal hot/cold attribution, stream duration, CPU/memory, and aggregate live delivery/drop metrics. Sensor payloads and physical locators are never logged.
 

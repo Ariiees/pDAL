@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//sys/firmware/devicetree/base/**)",
+      "Read(//proc/**)",
+      "Read(//sys/devices/system/cpu/cpufreq/policy0/**)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}
