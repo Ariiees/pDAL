@@ -13,6 +13,7 @@ session-secret
 /demo/pi/config/auth-secret
 /demo/pi/config/session-secret
 /demo/pi/config/roles.auth.json
+/demo/pi/config/launcher.lock
 
 # Platform binaries fetched by scripts/fetch_privacy_deps.sh
 /third_party/onnxruntime/

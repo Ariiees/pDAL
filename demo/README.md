@@ -1,5 +1,61 @@
 # pDAL Raspberry Pi demo service
 
+## One-command private-5G launch
+
+On this Pi:
+
+```bash
+cd /home/avs/pDAL
+./pDAL.sh
+```
+
+Wait for `READY`, then on the demo host:
+
+```bash
+cd /home/yuxw/demo
+./scripts/start_host.sh
+```
+
+Open `http://127.0.0.1:8088` in the host browser, choose a role, and enter
+its **gateway role password** (not the host SSH password). The seeded demo
+passwords are listed below. Keep the Pi terminal open. Ctrl+C closes the
+tunnel and stops both Pi services. A second launcher is rejected while one
+is running. If an older viewer already occupies port 8088, stop that viewer
+before starting the updated host launcher.
+
+`pDAL.sh` starts `start_pi.sh`, waits for gateway health, and establishes an
+outbound SSH connection to `yuxw@128.175.213.233`. The host's loopback port
+`18090` forwards to the Pi's loopback port `8090`; neither Pi HTTP service
+needs an inbound route through private 5G. The launcher verifies a health
+request from the host through the tunnel, detects dropped SSH connections,
+and retries every five seconds. SSH keepalives detect silent disconnections
+in approximately 30 seconds. Pi service failures stop the launcher with an
+error, so startup/configuration errors remain visible.
+
+The dedicated key `/home/avs/.ssh/pdal_demo_ed25519` is authorized on the
+host. No SSH password is stored by the launcher. Host identity verification
+uses the Pi's existing SSH known-hosts file. On another Pi, provision an
+authorized SSH key and verify the host key first.
+
+Overrides: `./pDAL.sh --host ADDRESS --user USER --key PATH --remote-port PORT`
+(also `PDAL_SSH_HOST`, `PDAL_SSH_USER`, `PDAL_SSH_KEY`, `PDAL_REMOTE_PORT`).
+If changing the remote port, set the host's `PI_URL` to match.
+
+The existing deployment at `/home/yuxw/demo` was updated once: its launcher
+defaults `PI_URL` to `http://127.0.0.1:18090`, its proxy forwards login POSTs
+and Authorization headers, and its viewer prompts for the gateway password.
+The session token stays in browser memory. Original host files are preserved
+beside each modified file with suffix `.before-pdal-launcher-20260910`.
+[`host-tunnel-compat.patch`](host-tunnel-compat.patch) records those companion
+changes against that deployment layout; do not reapply it to the already
+updated host. These changes preserve the Pi's required authentication.
+
+Verify from the host while the Pi launcher is ready:
+
+```bash
+curl --fail http://127.0.0.1:18090/api/health
+```
+
 This directory contains the two-device demo components that run on the
 Raspberry Pi. The OEM viewer and all host-side decoding code live separately
 on the repository's [`host`](https://github.com/Ariiees/pDAL/tree/host) branch.

@@ -52,20 +52,34 @@ fi
 
 "${PDAL_BIN}" serve --config "${PDAL_CONFIG}" &
 PDAL_PID=$!
+GATEWAY_PID=
 cleanup() {
+  if [[ -n "${GATEWAY_PID}" ]]; then
+    kill "${GATEWAY_PID}" 2>/dev/null || true
+    wait "${GATEWAY_PID}" 2>/dev/null || true
+  fi
   kill "${PDAL_PID}" 2>/dev/null || true
   wait "${PDAL_PID}" 2>/dev/null || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-for _ in $(seq 1 30); do
-  if curl --silent --fail http://127.0.0.1:8080/pdal/v1 >/dev/null; then
+for _ in $(seq 1 60); do
+  if ! kill -0 "${PDAL_PID}" 2>/dev/null; then
+    echo "pDAL exited during startup" >&2
+    exit 1
+  fi
+  if curl --silent --fail --max-time 2 http://127.0.0.1:8080/pdal/v1 >/dev/null; then
     python3 "${DEMO_ROOT}/demo/pi/gateway.py" \
       --auth-secret-file "${AUTH_SECRET_FILE}" \
-      "${GATEWAY_ARGS[@]}" "$@"
-    exit $?
+      "${GATEWAY_ARGS[@]}" "$@" &
+    GATEWAY_PID=$!
+    wait -n "${PDAL_PID}" "${GATEWAY_PID}"
+    echo "A Pi service exited unexpectedly" >&2
+    exit 1
   fi
-  sleep 0.2
+  sleep 1
 done
 
 echo "pDAL did not become ready on 127.0.0.1:8080" >&2

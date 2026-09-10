@@ -3,6 +3,10 @@
 pDAL gives applications a stable, policy-controlled API for recorded and live
 vehicle data while keeping storage tiers and live vehicle data private.
 
+For this Pi's private-5G demo, run `./pDAL.sh` and wait for `READY`, then run
+`./scripts/start_host.sh` in `/home/yuxw/demo` on the host. See the
+[one-command launch instructions](demo/README.md#one-command-private-5g-launch).
+
 The repository has two deployment branches:
 
 | Machine | Git branch | Responsibility |

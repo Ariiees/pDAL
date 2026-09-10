@@ -1,0 +1,134 @@
+--- a/demo/scripts/start_host.sh
++++ b/demo/scripts/start_host.sh
+@@ -2,4 +2,6 @@
+ set -euo pipefail
+ 
+ DEMO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
++# pDAL.sh on the Pi maintains this reverse SSH tunnel.
++export PI_URL=${PI_URL:-http://127.0.0.1:18090}
+ exec python3 "${DEMO_ROOT}/demo/host/server.py" "$@"
+--- a/demo/host/server.py
++++ b/demo/host/server.py
+@@ -18,6 +18,12 @@
+ class ViewerHandler(SimpleHTTPRequestHandler):
+     server_version = "pdal-oem-viewer/1"
+ 
++    def do_POST(self) -> None:
++        if self.path.split("?", 1)[0] in {"/api/login", "/api/logout"}:
++            self._proxy()
++        else:
++            self.send_error(404)
++
+     def do_GET(self) -> None:
+         if self.path == "/health":
+             self._send(200, b'{"status":"ready","decode_location":"host"}', "application/json")
+@@ -46,7 +52,22 @@
+ 
+     def _proxy(self) -> None:
+         target = self.server.pi_url.rstrip("/") + self.path  # type: ignore[attr-defined]
+-        request = urllib.request.Request(target, method="GET")
++        body = None
++        if self.command == "POST":
++            try:
++                length = int(self.headers.get("Content-Length", "0"))
++            except ValueError:
++                self.send_error(400, "Invalid Content-Length")
++                return
++            if not 0 <= length <= 16384:
++                self.send_error(413)
++                return
++            body = self.rfile.read(length)
++        headers = {}
++        for name in ("Authorization", "Content-Type"):
++            if name in self.headers:
++                headers[name] = self.headers[name]
++        request = urllib.request.Request(target, data=body, headers=headers, method=self.command)
+         try:
+             with urllib.request.urlopen(request, timeout=60) as response:
+                 body = response.read()
+@@ -61,7 +82,7 @@
+             self.end_headers()
+             self.wfile.write(body)
+         except Exception as error:
+-            body = (f'{{"error":"Pi connectivity failed: {str(error)}"}}').encode()
++            body = json.dumps({"error": f"Pi connectivity failed: {error}"}).encode()
+             self._send(502, body, "application/json")
+ 
+     def _copy_headers(self, headers, length: int) -> None:
+--- a/demo/host/viewer/app.js
++++ b/demo/host/viewer/app.js
+@@ -26,14 +26,73 @@
+ let sensorTimer;
+ let toastTimer;
+ let lidarView;
++let sessionToken = null;
++let sessionRole = null;
++let loginPending = null;
+ const cameraView = {zoom: 1, x: 0, y: 0, dragging: false, lastX: 0, lastY: 0};
+ 
++// Keep the credential and bearer token in memory only.
++async function signIn() {
++  if (loginPending) return loginPending;
++  loginPending = new Promise((resolve, reject) => {
++    const dialog = document.createElement('dialog');
++    dialog.style.cssText = 'border:1px solid #52606d;border-radius:12px;padding:24px;max-width:360px';
++    dialog.innerHTML = `<form><h2>Sign in to vehicle data</h2>
++      <p class="login-role"></p>
++      <label>Password <input type="password" autocomplete="current-password" required></label>
++      <p class="login-error" role="alert"></p>
++      <button type="submit">Sign in</button> <button type="button">Cancel</button></form>`;
++    const role = state.role;
++    dialog.querySelector('.login-role').textContent = state.roles.find((item) => item.id === role)?.label || role;
++    const cancel = () => { dialog.remove(); reject(new Error('Sign-in cancelled. Select a role to sign in.')); };
++    dialog.addEventListener('cancel', (event) => { event.preventDefault(); cancel(); });
++    dialog.querySelector('button[type="button"]').addEventListener('click', cancel);
++    dialog.querySelector('form').addEventListener('submit', async (event) => {
++      event.preventDefault();
++      const button = dialog.querySelector('button[type="submit"]');
++      button.disabled = true;
++      try {
++        const response = await fetch('/api/login', {
++          method: 'POST', headers: {'Content-Type': 'application/json'},
++          body: JSON.stringify({role, password: dialog.querySelector('input').value}),
++        });
++        const data = await response.json();
++        if (!response.ok) throw new Error(data.error || `Sign-in failed: HTTP ${response.status}`);
++        sessionToken = data.token;
++        sessionRole = data.role;
++        dialog.querySelector('input').value = '';
++        dialog.remove();
++        resolve();
++      } catch (error) {
++        dialog.querySelector('.login-error').textContent = error.message;
++      } finally { button.disabled = false; }
++    });
++    document.body.append(dialog);
++    dialog.showModal();
++    dialog.querySelector('input').focus();
++  });
++  try { await loginPending; }
++  finally { loginPending = null; }
++}
++
+ function reportClientStatus(values) {
+   fetch(api('/client-status', values), {cache: 'no-store'}).catch(() => {});
+ }
+ 
+ async function trackedFetch(url, options = {}) {
+-  const response = await fetch(url, options);
++  const path = new URL(url, window.location.href).pathname;
++  const protectedCall = path.startsWith('/api/') && !['/api/health', '/api/roles'].includes(path);
++  if (protectedCall && (!sessionToken || sessionRole !== state.role)) await signIn();
++  const headers = new Headers(options.headers);
++  if (protectedCall) headers.set('Authorization', `Bearer ${sessionToken}`);
++  let response = await fetch(url, {...options, headers});
++  if (protectedCall && response.status === 401) {
++    await response.arrayBuffer();
++    sessionToken = null;
++    await signIn();
++    headers.set('Authorization', `Bearer ${sessionToken}`);
++    response = await fetch(url, {...options, headers});
++  }
+   const body = await response.arrayBuffer();
+   const measured = Number(response.headers.get('x-demo-network-bytes') || body.byteLength);
+   state.networkBytes += measured;
