@@ -61,7 +61,12 @@
         <div><span class="eyebrow">ONBOARD CATALOG</span><h1>Recordings</h1></div>
         <span class="count-pill" id="tripCount">—</span>
       </div>
-      <p class="sidebar-note">Metadata first. Select an existing recording, then inspect time visually.</p>
+      <p class="sidebar-note">Browse SSD recordings and HDD archives. Select a trip to inspect its timestamps.</p>
+      <label class="sidebar-note">Storage location
+        <select id="storageFilter" aria-label="Filter recordings by storage location">
+          <option value="">SSD + HDD</option><option value="SSD">On SSD</option><option value="HDD">On HDD</option>
+        </select>
+      </label>
       <div id="tripList" class="trip-list" aria-live="polite"></div>
       <div class="policy-card">
         <div class="policy-icon">✓</div>
@@ -141,6 +146,7 @@
       <section class="panel timeline-panel">
         <div class="timeline-head">
           <div><span class="eyebrow">MULTI-MODALITY TIMELINE</span><h3>Timestamp-oriented history inspector</h3></div>
+          <select id="brakeEventSelect" aria-label="Jump to hard-braking candidate" hidden></select>
           <span id="timelineHint">Click or drag to change T</span>
         </div>
         <canvas id="timeline" height="150"></canvas>
@@ -153,6 +159,11 @@
         <div class="bandwidth-stat accent"><span>NETWORK TRANSFERRED</span><strong id="networkBytes">0 B</strong></div>
         <div class="bandwidth-stat"><span>RECORDS RETURNED</span><strong id="recordsReturned">0</strong></div>
         <div class="reduction"><span id="reductionValue">—</span><small>BANDWIDTH AVOIDED</small></div>
+        <div class="retrieval-latency">
+          <span>REQUEST → FULL RESPONSE</span>
+          <strong id="retrievalLatency">No data requests yet</strong>
+          <details><summary>Recent retrievals (up to 50)</summary><ol id="retrievalHistory"></ol></details>
+        </div>
       </section>
     </main>
   </div>
@@ -170,6 +181,6 @@
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-  <script type="module" src="app.js?v=topdown-center"></script>
+  <script type="module" src="app.js?v=storage-latency-20260915"></script>
 </body>
 </html>

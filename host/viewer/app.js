@@ -13,9 +13,12 @@ const state = {
   trip: null,
   access: {},
   timeline: {},
+  brakeEvents: [],
+  brakeStatus: "loading",
   route: [],
   selectedNs: null,
   networkBytes: 0,
+  retrievals: [],
   recordsReturned: 0,
   sensorGeneration: 0,
   cameraUrl: null,
@@ -28,6 +31,7 @@ let mapReady = false;
 let sensorTimer;
 let toastTimer;
 let countdownTimer;
+let retrievalSequence = 0;
 let lidarView;
 const cameraView = {zoom: 1, x: 0, y: 0, dragging: false, lastX: 0, lastY: 0};
 
@@ -40,8 +44,7 @@ async function trackedFetch(url, options = {}) {
   if (state.token && url.startsWith('/api/')) {
     headers['Authorization'] = `Bearer ${state.token}`;
   }
-  const response = await fetch(url, {...options, headers, cache: options.cache || 'no-store'});
-  const body = await response.arrayBuffer();
+  const {response, body} = await fetchBodyTimed(url, {...options, headers, cache: options.cache || 'no-store'});
   const measured = Number(response.headers.get('x-demo-network-bytes') || body.byteLength);
   state.networkBytes += measured;
   updateBandwidth();
@@ -520,7 +523,9 @@ async function doLogout() {
   state.access = {};
   state.route = [];
   state.timeline = {};
+  state.brakeEvents = []; state.brakeStatus = "loading"; renderBrakeEvents();
   state.networkBytes = 0;
+  state.retrievals = []; renderRetrievalLatency();
   state.recordsReturned = 0;
   $('tripList').innerHTML = '';
   $('tripCount').textContent = '—';
@@ -552,7 +557,10 @@ async function loadTrips() {
 }
 
 function renderTrips() {
-  $('tripList').innerHTML = state.trips.map((trip) => {
+  const filter = $('storageFilter').value;
+  const visible = state.trips.filter((trip) => !filter || trip.storage_locations?.includes(filter));
+  $('tripCount').textContent = filter ? `${visible.length}/${state.trips.length}` : state.trips.length;
+  $('tripList').innerHTML = visible.map((trip) => {
     const recorded = new Set(trip.modalities.map((item) => item.resource));
     const time = formatInstant(trip.start_ns);
     const active = state.trip?.id === trip.id;
@@ -560,11 +568,11 @@ function renderTrips() {
       <div class="trip-detail-row">
         <b>${item.resource === 'position' ? 'GPS' : item.resource === 'camera.front' ? 'CAM' : 'LIDAR'}</b>
         <span>${formatInstant(item.start_ns)}–${formatInstant(item.end_ns)}</span>
-        <span>${item.record_count == null ? 'count n/a' : Number(item.record_count).toLocaleString()} · ${formatBytes(item.stored_bytes)}</span>
-      </div>`).join('')}<div class="event-empty">EVENTS · [] · real brake source unavailable</div></div>` : '';
+        <span>${item.record_count == null ? 'count n/a' : Number(item.record_count).toLocaleString()} · ${formatBytes(item.stored_bytes)} · ${storageLabel(item)}</span>
+      </div>`).join('')}<div class="event-empty">${brakeSummary()}</div></div>` : '';
     return `<button class="trip-card ${active ? 'active' : ''}" data-trip="${trip.id}">
       <div class="trip-day"><strong>${trip.label}</strong><time>${time}</time></div>
-      <div class="trip-meta"><span>${formatDuration(trip.duration_ns)}</span><span>${formatBytes(trip.candidate_bytes)}</span></div>
+      <div class="trip-meta"><span>${formatDuration(trip.duration_ns)}</span><span>${formatBytes(trip.candidate_bytes)} · ${storageLabel(trip)}</span></div>
       <div class="modality-pips"><span class="${recorded.has('position') ? 'available' : ''}">GPS</span><span class="${recorded.has('camera.front') ? 'available' : ''}">CAM</span><span class="${recorded.has('lidar.top') ? 'available' : ''}">LIDAR</span></div>
       ${detail}
     </button>`;
@@ -578,7 +586,9 @@ async function selectTrip(tripId) {
   state.trip = trip;
   state.route = [];
   state.timeline = {};
+  state.brakeEvents = []; state.brakeStatus = "loading"; renderBrakeEvents();
   state.networkBytes = 0;
+  state.retrievals = []; renderRetrievalLatency();
   state.recordsReturned = 0;
   state.selectedNs = String((BigInt(trip.start_ns) + BigInt(trip.end_ns)) / 2n);
   state.sensorGeneration += 1;
@@ -596,7 +606,7 @@ async function selectTrip(tripId) {
 
 function renderContext() {
   const trip = state.trip;
-  $('tripTitle').textContent = trip.label;
+  $('tripTitle').textContent = `${trip.label} · ${storageLabel(trip)}`;
   $('tripWindow').textContent = `${formatInstant(trip.start_ns, true)} → ${formatInstant(trip.end_ns)}`;
   $('selectedTime').textContent = formatInstant(state.selectedNs, true);
   $('candidateBytes').textContent = formatBytes(trip.candidate_bytes);
@@ -614,7 +624,14 @@ function renderAccess() {
 }
 
 async function loadTimeline() {
-  const data = await fetchJson(api('/api/timeline', {trip: state.trip.id}));
+  const trip = state.trip;
+  const role = state.role;
+  const data = await fetchJson(api('/api/timeline', {trip: trip.id}));
+  if (state.trip !== trip || state.role !== role) return;
+  state.brakeEvents = data.hard_braking?.events || [];
+  state.brakeStatus = data.hard_braking?.status || 'unavailable';
+  renderBrakeEvents();
+  renderTrips();
   state.timeline = data.tracks || {};
   state.access = data.access || state.access;
   renderAccess();
@@ -771,17 +788,27 @@ function updateSensorReadout(prefix, response) {
 function setupTimeline() {
   const canvas = $('timeline');
   let dragging = false;
+  $('brakeEventSelect').addEventListener('change', (event) => {
+    if (event.target.value) setSelectedTime(event.target.value);
+  });
   const choose = (event) => {
     if (!state.trip) return;
     const rect = canvas.getBoundingClientRect();
     const left = 112;
     const right = rect.width - 24;
+    const marker = nearestBrakeEvent(event.clientX - rect.left, left, right);
+    if (marker) { setSelectedTime(marker.timestamp_ns); return; }
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left - left) / Math.max(1, right - left)));
     const span = BigInt(state.trip.end_ns) - BigInt(state.trip.start_ns);
     setSelectedTime(String(BigInt(state.trip.start_ns) + BigInt(Math.round(Number(span) * ratio))));
   };
   canvas.addEventListener('pointerdown', (event) => { dragging = true; canvas.setPointerCapture(event.pointerId); choose(event); });
-  canvas.addEventListener('pointermove', (event) => { if (dragging) choose(event); });
+  canvas.addEventListener('pointermove', (event) => {
+    if (dragging) choose(event);
+    const rect = canvas.getBoundingClientRect();
+    const marker = nearestBrakeEvent(event.clientX - rect.left, 112, rect.width - 24);
+    canvas.title = marker ? `Hard-braking candidate · ${formatInstant(marker.timestamp_ns, true)}` : '';
+  });
   canvas.addEventListener('pointerup', () => { dragging = false; });
   window.addEventListener('resize', drawTimeline);
 }
@@ -838,6 +865,13 @@ function drawTimeline() {
     ctx.fillStyle = '#e9f0f2'; ctx.beginPath(); ctx.moveTo(x - 5, 13); ctx.lineTo(x + 5, 13); ctx.lineTo(x, 19); ctx.fill();
     ctx.font = '700 9px ui-monospace, monospace'; ctx.fillText('T', x + 7, 21);
   }
+  if (state.trip) {
+    ctx.strokeStyle = '#ff4545'; ctx.lineWidth = 2;
+    for (const event of state.brakeEvents) {
+      const x = timeToX(event.timestamp_ns, left, right);
+      ctx.beginPath(); ctx.moveTo(x, 15); ctx.lineTo(x, 130); ctx.stroke();
+    }
+  }
 }
 
 function timeToX(ns, left, right) {
@@ -877,6 +911,13 @@ function showToast(message, error = false) {
 }
 
 function bindEvents() {
+  $('storageFilter').addEventListener('change', () => {
+    renderTrips();
+    const tier = $('storageFilter').value;
+    const next = state.trips.find((trip) => !tier || trip.storage_locations?.includes(tier));
+    if (next && tier && !state.trip?.storage_locations?.includes(tier)) selectTrip(next.id);
+  });
+
   $('loginForm').addEventListener('submit', (event) => { event.preventDefault(); doLogin(); });
   $('logoutButton').addEventListener('click', doLogout);
   $('denialButton').addEventListener('click', runDenialProof);
@@ -928,6 +969,91 @@ async function boot() {
     $('connectionLabel').textContent = 'Vehicle connection failed';
     showToast(error.message, true);
   }
+}
+
+
+
+async function fetchBodyTimed(url, options) {
+  const request = new URL(url, window.location.href);
+  const isData = ['/api/history', '/api/closest'].includes(request.pathname);
+  const trip = state.trip;
+  const role = state.role;
+  const id = ++retrievalSequence;
+  const started = performance.now();
+  let response;
+  let complete = false;
+  try {
+    response = await fetch(url, options);
+    const body = await response.arrayBuffer();
+    complete = true;
+    return {response, body};
+  } finally {
+    const elapsed = performance.now() - started;
+    if (isData && state.trip === trip && state.role === role) {
+      const resource = request.searchParams.get('resource');
+      state.retrievals.push({id, resource, kind: request.pathname.endsWith('closest') ? 'sample' : 'history',
+        timestamp: request.searchParams.get('t_ns') || request.searchParams.get('start_ns'),
+        elapsed, status: complete ? response.status : 'transfer failed'});
+      state.retrievals.sort((a, b) => b.id - a.id);
+      state.retrievals = state.retrievals.slice(0, 50);
+      renderRetrievalLatency();
+    }
+  }
+}
+
+
+function renderRetrievalLatency() {
+  const format = (entry) => {
+    const label = {position: 'GPS', 'camera.front': 'Camera', 'lidar.top': 'LiDAR'}[entry.resource] || 'Data';
+    const duration = entry.elapsed >= 1000 ? `${(entry.elapsed / 1000).toFixed(2)} s` : `${entry.elapsed.toFixed(1)} ms`;
+    return `${label} ${entry.kind}: ${duration} · ${entry.status}`;
+  };
+  $('retrievalLatency').textContent = state.retrievals.length ? format(state.retrievals[0]) : 'No data requests yet';
+  const list = $('retrievalHistory'); list.replaceChildren();
+  for (const entry of state.retrievals) {
+    const row = document.createElement('li');
+    row.textContent = `${formatInstant(entry.timestamp, true)} · ${format(entry)}`;
+    list.append(row);
+  }
+}
+
+
+function storageLabel(item) {
+  return (item?.storage_locations || []).filter((tier) => tier === 'SSD' || tier === 'HDD').join(' + ') || 'Location unavailable';
+}
+
+
+function brakeSummary() {
+  if (state.brakeStatus === 'ready') return `HARD-BRAKING CANDIDATES · ${state.brakeEvents.length}`;
+  return {
+    loading: 'Checking brake events…', denied: 'Brake events restricted by pDAL',
+    'not-recorded': 'No brake records in this time range',
+    unavailable: 'Brake event scan unavailable',
+  }[state.brakeStatus] || 'Brake events unavailable';
+}
+
+
+function renderBrakeEvents() {
+  const select = $('brakeEventSelect');
+  select.replaceChildren(new Option('Jump to hard-braking candidate…', ''));
+  for (const event of state.brakeEvents) {
+    select.add(new Option(formatInstant(event.timestamp_ns, true), event.timestamp_ns));
+  }
+  select.hidden = state.brakeEvents.length === 0;
+  $('timelineHint').textContent = state.brakeEvents.length
+    ? 'Red lines: hard-braking candidates · click to jump'
+    : brakeSummary();
+}
+
+
+function nearestBrakeEvent(x, left, right) {
+  let nearest = null;
+  let distance = 7;
+  for (const event of state.brakeEvents) {
+    const delta = Math.abs(timeToX(event.timestamp_ns, left, right) - x);
+    if (delta < distance) { nearest = event; distance = delta; }
+  }
+  return nearest;
 }
 
 boot();

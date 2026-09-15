@@ -197,3 +197,13 @@ h1 { font-size: 21px; margin-top: 3px; }
   .telemetry-strip { min-height: 72px; margin-top: 10px; }
   .telemetry-strip { grid-template-columns: 1fr 135px 20px 145px 115px 125px; }
 }
+
+/* Storage and complete-response latency in the existing browser footer. */
+#storageFilter { max-width: 100%; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 4px; }
+.telemetry-strip { grid-template-columns: minmax(100px, 1fr) 105px 16px 115px 105px 100px minmax(195px, 1fr); gap: 7px; }
+.retrieval-latency { position: relative; min-width: 0; border-left: 1px solid var(--line); padding-left: 10px; }
+.retrieval-latency > span { display: block; color: var(--muted); font: 650 8px ui-monospace, monospace; }
+.retrieval-latency strong { display: block; color: var(--cyan); font: 650 10px ui-monospace, monospace; margin: 5px 0; }
+.retrieval-latency summary { cursor: pointer; color: var(--muted); font-size: 9px; }
+#retrievalHistory { position: absolute; bottom: 100%; right: 0; width: min(470px, 80vw); max-height: 260px; overflow: auto; z-index: 5; margin: 8px 0; padding: 12px 12px 12px 30px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font: 10px/1.8 ui-monospace, monospace; }
+@media (max-width: 1180px) { .telemetry-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

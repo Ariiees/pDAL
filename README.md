@@ -96,4 +96,33 @@ deno run --allow-net tests/laz_decode_test.js http://128.175.213.254:8090
 > device-side privacy stage lands (separate workstream). See
 > `docs/security.md` on the `pDAL` branch for the full security model.
 
-See [TODO.md](TODO.md) for the future real brake-event integration boundary.
+## SSD/HDD and retrieval timing
+
+Trips and their modalities show `SSD`, `HDD`, or `SSD + HDD`. The storage filter
+shows recordings available on that medium; a trip stored in both appears once.
+The Pi gateway must provide `storage_locations` metadata. Timestamp selection
+uses the existing pDAL/AVS retrieval path, which reads archived HDD records
+without extracting whole archives. If both copies exist, AVS selects its usual
+preferred copy; labels indicate availability, not a forced source selection.
+
+The bottom-right **Request → full response** panel measures each data request
+through arrival of its complete body. This includes browser/host proxy, Pi
+query processing and transport; it excludes sign-in interaction and browser
+sensor decoding/rendering. Expand the panel for the latest 50 retrievals,
+including requested timestamps, GPS/camera/LiDAR, duration and HTTP status.
+Failed transfers are labeled. Entries reset when selecting another trip.
+
+Red lines mark pedal-based hard-braking candidates supplied by the Pi gateway.
+Click a line or choose its timestamp to retrieve permitted sensor data. Marker
+access follows the existing `vehicle.brake` policy. The current Pi threshold is
+raw `pedal_output >= 0.30` sustained for 0.20 s; change it in the Pi's
+`demo/pi/config/hard_brake.json` and restart pDAL. No speed is used.
+
+Optional browser checks (Playwright and Chromium required):
+`node tests/storage_latency_browser.cjs` and
+`node tests/brake_timeline_browser.cjs`. They use isolated browser fixtures.
+
+For the deployed SSH tunnel, use
+`./scripts/start_host.sh --pi-url http://127.0.0.1:18090`.
+
+See [TODO.md](TODO.md) for remaining brake calibration work.
