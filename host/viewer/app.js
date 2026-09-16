@@ -21,6 +21,7 @@ const state = {
   retrievals: [],
   recordsReturned: 0,
   sensorGeneration: 0,
+  tripGeneration: 0,
   cameraUrl: null,
   token: null,
   expiresAt: null,
@@ -29,6 +30,8 @@ const state = {
 let map;
 let mapReady = false;
 let sensorTimer;
+let sensorController;
+let tripController;
 let toastTimer;
 let countdownTimer;
 let retrievalSequence = 0;
@@ -40,14 +43,18 @@ function reportClientStatus(values) {
 }
 
 async function trackedFetch(url, options = {}) {
+  const tripGeneration = state.tripGeneration;
+  const token = state.token;
   const headers = {...(options.headers || {})};
   if (state.token && url.startsWith('/api/')) {
     headers['Authorization'] = `Bearer ${state.token}`;
   }
   const {response, body} = await fetchBodyTimed(url, {...options, headers, cache: options.cache || 'no-store'});
   const measured = Number(response.headers.get('x-demo-network-bytes') || body.byteLength);
-  state.networkBytes += measured;
-  updateBandwidth();
+  if (tripGeneration === state.tripGeneration && token === state.token) {
+    state.networkBytes += measured;
+    updateBandwidth();
+  }
   if (!response.ok) {
     let details;
     try { details = JSON.parse(new TextDecoder().decode(body)); }
@@ -55,7 +62,7 @@ async function trackedFetch(url, options = {}) {
     const error = new Error(details.message || details.error || `HTTP ${response.status}`);
     error.status = response.status;
     error.details = details;
-    if (response.status === 401 && state.token) {
+    if (response.status === 401 && state.token && token === state.token) {
       clearSession();
       showLogin('Session expired — sign in again');
     }
@@ -64,8 +71,8 @@ async function trackedFetch(url, options = {}) {
   return {response, body};
 }
 
-async function fetchJson(url) {
-  const {body} = await trackedFetch(url);
+async function fetchJson(url, options = {}) {
+  const {body} = await trackedFetch(url, options);
   return JSON.parse(new TextDecoder().decode(body));
 }
 
@@ -353,6 +360,13 @@ function initLidar() {
   }
   animate();
   lidarView = {
+    clear() {
+      if (!cloud) return;
+      scene.remove(cloud);
+      cloud.geometry.dispose();
+      cloud.material.dispose();
+      cloud = null;
+    },
     setCloud(positions) {
       if (cloud) {
         scene.remove(cloud);
@@ -432,6 +446,9 @@ async function decodeLaz(payload) {
 // ── Session management ──────────────────────────────────────────────────────
 
 function clearSession() {
+  state.tripGeneration += 1;
+  tripController?.abort();
+  invalidateSensors();
   state.token = null;
   state.expiresAt = null;
   sessionStorage.removeItem('pdal_token');
@@ -583,7 +600,11 @@ function renderTrips() {
 async function selectTrip(tripId) {
   const trip = state.trips.find((item) => item.id === tripId);
   if (!trip) return;
+  const generation = ++state.tripGeneration;
+  tripController?.abort();
+  tripController = new AbortController();
   state.trip = trip;
+  state.access = {};
   state.route = [];
   state.timeline = {};
   state.brakeEvents = []; state.brakeStatus = "loading"; renderBrakeEvents();
@@ -591,17 +612,33 @@ async function selectTrip(tripId) {
   state.retrievals = []; renderRetrievalLatency();
   state.recordsReturned = 0;
   state.selectedNs = String((BigInt(trip.start_ns) + BigInt(trip.end_ns)) / 2n);
-  state.sensorGeneration += 1;
+  invalidateSensors();
+  if (mapReady) {
+    map.getSource('route').setData(emptyFeatureCollection());
+    map.getSource('current').setData(emptyFeatureCollection());
+  }
   renderTrips();
   renderContext();
   renderAccess();
   drawTimeline();
   updateBandwidth();
-  // Closest-record panels become useful immediately; background tasks run in parallel.
-  scheduleSensorLoad(0);
-  const background = await Promise.allSettled([loadTimeline(), loadRoute(), loadAccess()]);
-  const failed = background.find((result) => result.status === 'rejected');
-  if (failed) showToast(failed.reason.message, true);
+  // Resolve this trip's access before scheduling any payload reads.
+  try {
+    await loadAccess();
+    if (generation !== state.tripGeneration) return;
+    scheduleSensorLoad(0);
+    const background = await Promise.allSettled([loadTimeline(), loadRoute()]);
+    if (generation !== state.tripGeneration) return;
+    const failed = background.find((result) => result.status === 'rejected');
+    if (failed) showToast(failed.reason.message, true);
+  } catch (error) {
+    if (generation !== state.tripGeneration) return;
+    for (const resource of ['camera.front', 'lidar.top']) {
+      state.access[resource] = {authorized: false, status: error.status || 503, reason: error.message};
+    }
+    renderAccess();
+    showToast(error.message, true);
+  }
 }
 
 function renderContext() {
@@ -614,31 +651,34 @@ function renderContext() {
 
 function renderAccess() {
   for (const [resource, panel] of [['camera.front', 'camera'], ['lidar.top', 'lidar']]) {
-    const allowed = Boolean(state.access[resource]?.authorized);
-    $(`${panel}Lock`).classList.toggle('visible', !allowed);
-    $(`${panel}State`).textContent = allowed ? 'AUTHORIZED' : 'DENIED';
+    const info = state.access[resource];
+    const allowed = Boolean(info?.authorized);
+    const denied = info && !allowed && (!info.status || [401, 403].includes(info.status));
+    $(`${panel}Lock`).classList.toggle('visible', Boolean(denied));
+    $(`${panel}State`).textContent = allowed ? 'AUTHORIZED' : !info ? 'CHECKING ACCESS' : denied ? 'DENIED' : 'UNAVAILABLE';
     $(`${panel}State`).classList.toggle('authorized', allowed);
+    if (info && !allowed && !denied) setSensorEmpty(panel, 'Temporarily unavailable', 'Select the trip again to retry.');
   }
   const policy = Object.values(state.access).find((entry) => entry.policy)?.policy;
   $('policyVersion').textContent = policy ? `${policy} · enforced onboard` : 'pDAL policy active';
 }
 
 async function loadTimeline() {
+  const generation = state.tripGeneration;
   const trip = state.trip;
   const role = state.role;
-  const data = await fetchJson(api('/api/timeline', {trip: trip.id}));
-  if (state.trip !== trip || state.role !== role) return;
+  const data = await fetchJson(api('/api/timeline', {trip: trip.id}), {signal: tripController?.signal});
+  if (generation !== state.tripGeneration || state.trip !== trip || state.role !== role) return;
   state.brakeEvents = data.hard_braking?.events || [];
   state.brakeStatus = data.hard_braking?.status || 'unavailable';
   renderBrakeEvents();
   renderTrips();
   state.timeline = data.tracks || {};
-  state.access = data.access || state.access;
-  renderAccess();
   drawTimeline();
 }
 
 async function loadRoute() {
+  const generation = state.tripGeneration;
   const gps = state.trip.modalities.find((item) => item.resource === 'position');
   if (!gps || !state.access.position?.authorized) return;
   const everyN = Math.max(1, Math.ceil((gps.record_count || 1) / 1800));
@@ -649,7 +689,8 @@ async function loadRoute() {
     end_ns: gps.end_ns,
     every_n: everyN,
     max_records: 50000,
-  }));
+  }), {signal: tripController?.signal});
+  if (generation !== state.tripGeneration) return;
   const records = parseRecordStream(body);
   state.recordsReturned += records.length;
   state.route = records.map((record) => ({...decodeGps(record.payload), timestampNs: record.metadata.timestamp_ns}));
@@ -658,8 +699,10 @@ async function loadRoute() {
 }
 
 async function loadAccess() {
+  const generation = state.tripGeneration;
   const params = state.trip ? {trip: state.trip.id} : {};
-  const data = await fetchJson(api('/api/access', params));
+  const data = await fetchJson(api('/api/access', params), {signal: tripController?.signal});
+  if (generation !== state.tripGeneration) return;
   state.access = data.resources || state.access;
   renderAccess();
   renderAccessPanel(data);
@@ -672,7 +715,7 @@ function renderAccessPanel(data) {
     const authorized = info.authorized;
     const badge = authorized
       ? `<span class="access-badge ok">AUTHORIZED</span>`
-      : `<span class="access-badge denied">${info.status || 403} · ${info.code || 'DENIED'}</span>`;
+      : `<span class="access-badge denied">${info.status || 403} · ${info.code || (info.status >= 500 || info.status === 429 ? 'UNAVAILABLE' : 'DENIED')}</span>`;
     const reason = !authorized && info.reason
       ? `<small>${info.reason}</small>`
       : '';
@@ -693,23 +736,57 @@ function setSelectedTime(ns) {
 }
 
 function scheduleSensorLoad(delay) {
-  clearTimeout(sensorTimer);
+  invalidateSensors();
   sensorTimer = setTimeout(loadSelectedSensors, delay);
+}
+
+function setSensorEmpty(panel, title, detail = '') {
+  const empty = $(`${panel}Empty`);
+  empty.style.display = 'flex';
+  empty.querySelector('strong').textContent = title;
+  empty.querySelector('small').textContent = detail;
+}
+
+function invalidateSensors() {
+  clearTimeout(sensorTimer);
+  state.sensorGeneration += 1;
+  sensorController?.abort();
+  sensorController = new AbortController();
+  const image = $('cameraImage');
+  image.removeAttribute('src');
+  image.style.display = 'none';
+  if (state.cameraUrl) URL.revokeObjectURL(state.cameraUrl);
+  state.cameraUrl = null;
+  lidarView?.clear();
+  for (const panel of ['camera', 'lidar']) {
+    setSensorEmpty(panel, 'Waiting for selected timestamp');
+    for (const field of ['Requested', 'Timestamp', 'Delta']) $(`${panel}${field}`).textContent = '—';
+  }
 }
 
 async function loadSelectedSensors() {
   if (!state.trip || !state.selectedNs) return;
-  const generation = ++state.sensorGeneration;
-  const jobs = [loadGpsClosest(generation)];
-  if (state.access['camera.front']?.authorized) jobs.push(loadCameraClosest(generation));
-  if (state.access['lidar.top']?.authorized) jobs.push(loadLidarClosest(generation));
-  const results = await Promise.allSettled(jobs);
-  const failed = results.find((result) => result.status === 'rejected');
-  if (failed && generation === state.sensorGeneration) showToast(failed.reason.message, true);
+  const generation = state.sensorGeneration;
+  const run = async (panel, load) => {
+    try { await load(generation); }
+    catch (error) {
+      if (generation !== state.sensorGeneration || error.name === 'AbortError') return;
+      if (panel !== 'gps') {
+        setSensorEmpty(panel, 'No sample displayed', error.message);
+        $(`${panel}State`).textContent = 'UNAVAILABLE';
+      }
+      showToast(error.message, true);
+    }
+  };
+  const jobs = [];
+  if (state.access.position?.authorized) jobs.push(run('gps', loadGpsClosest));
+  if (state.access['camera.front']?.authorized) jobs.push(run('camera', loadCameraClosest));
+  if (state.access['lidar.top']?.authorized) jobs.push(run('lidar', loadLidarClosest));
+  await Promise.all(jobs);
 }
 
 async function closest(resource) {
-  return trackedFetch(api('/api/closest', {trip: state.trip.id, resource, t_ns: state.selectedNs}));
+  return trackedFetch(api('/api/closest', {trip: state.trip.id, resource, t_ns: state.selectedNs}), {signal: sensorController?.signal});
 }
 
 async function loadGpsClosest(generation) {
@@ -731,20 +808,17 @@ async function loadCameraClosest(generation) {
   const records = parseRecordStream(body);
   if (!records.length) throw new Error('No retained camera frame near selected T');
   state.recordsReturned += records.length;
-  if (state.cameraUrl) URL.revokeObjectURL(state.cameraUrl);
-  state.cameraUrl = URL.createObjectURL(new Blob([records[0].payload], {type: 'image/jpeg'}));
+  const url = URL.createObjectURL(new Blob([records[0].payload], {type: 'image/jpeg'}));
+  const decoded = new Image();
+  decoded.src = url;
+  try { await decoded.decode(); }
+  catch (error) { URL.revokeObjectURL(url); throw error; }
+  if (generation !== state.sensorGeneration) { URL.revokeObjectURL(url); return; }
+  state.cameraUrl = url;
+  $('cameraImage').src = url;
   setCameraZoom(1);
-  $('cameraImage').src = state.cameraUrl;
-  $('cameraImage').onload = () => {
-    const image = $('cameraImage');
-    setCameraZoom(1);
-    reportClientStatus({
-      state: 'camera-rendered',
-      role: state.role,
-      camera_width: image.naturalWidth,
-      camera_height: image.naturalHeight,
-    });
-  };
+  reportClientStatus({state: 'camera-rendered', role: state.role,
+    camera_width: decoded.naturalWidth, camera_height: decoded.naturalHeight});
   $('cameraImage').style.display = 'block';
   $('cameraEmpty').style.display = 'none';
   updateSensorReadout('camera', response);
@@ -755,6 +829,7 @@ async function loadCameraClosest(generation) {
 async function loadLidarClosest(generation) {
   $('lidarState').textContent = 'DECODING ON HOST';
   const {response, body} = await closest('lidar.top');
+  if (generation !== state.sensorGeneration) return;
   const records = parseRecordStream(body);
   if (!records.length) throw new Error('No LiDAR snapshot near selected T');
   const positions = await decodeLaz(records[0].payload);
@@ -976,6 +1051,7 @@ async function boot() {
 async function fetchBodyTimed(url, options) {
   const request = new URL(url, window.location.href);
   const isData = ['/api/history', '/api/closest'].includes(request.pathname);
+  const generation = state.tripGeneration;
   const trip = state.trip;
   const role = state.role;
   const id = ++retrievalSequence;
@@ -989,11 +1065,11 @@ async function fetchBodyTimed(url, options) {
     return {response, body};
   } finally {
     const elapsed = performance.now() - started;
-    if (isData && state.trip === trip && state.role === role) {
+    if (isData && generation === state.tripGeneration && state.trip === trip && state.role === role) {
       const resource = request.searchParams.get('resource');
       state.retrievals.push({id, resource, kind: request.pathname.endsWith('closest') ? 'sample' : 'history',
         timestamp: request.searchParams.get('t_ns') || request.searchParams.get('start_ns'),
-        elapsed, status: complete ? response.status : 'transfer failed'});
+        elapsed, status: complete ? response.status : options.signal?.aborted ? 'cancelled' : 'transfer failed'});
       state.retrievals.sort((a, b) => b.id - a.id);
       state.retrievals = state.retrievals.slice(0, 50);
       renderRetrievalLatency();

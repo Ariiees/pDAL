@@ -126,3 +126,12 @@ For the deployed SSH tunnel, use
 `./scripts/start_host.sh --pi-url http://127.0.0.1:18090`.
 
 See [TODO.md](TODO.md) for remaining brake calibration work.
+
+Trip/timestamp switching cancels obsolete requests and clears old sensor samples.
+Access is checked for the selected trip before requesting payloads; temporary
+backend failures show UNAVAILABLE rather than LOCKED. The Pi gateway serializes
+historical reads and searches beyond two seconds when camera deduplication leaves
+a gap, always within the selected trip. CAMERA TIME and Δt identify the actual
+retained frame. AVS recording and role permissions are unchanged.
+Regression check: `node tests/viewer_selection_test.cjs` (Playwright required).
+After updating the gateway, restart Pi pDAL and hard-refresh the host browser.
