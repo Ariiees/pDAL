@@ -135,3 +135,7 @@ a gap, always within the selected trip. CAMERA TIME and Δt identify the actual
 retained frame. AVS recording and role permissions are unchanged.
 Regression check: `node tests/viewer_selection_test.cjs` (Playwright required).
 After updating the gateway, restart Pi pDAL and hard-refresh the host browser.
+
+For browser refresh, offline startup, and reverse-tunnel recovery, see
+[RECOVERY.md](RECOVERY.md), including the host SSH liveness setup and regression
+tests. Deploy the corresponding launcher update from the `pDAL` branch.

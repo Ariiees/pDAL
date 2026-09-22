@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OEM Vehicle History · pDAL</title>
   <link rel="preconnect" href="https://tile.openstreetmap.org">
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
   <link rel="stylesheet" href="styles.css?v=topdown-center">
   <script type="importmap">
     {"imports":{"three":"https://unpkg.com/three@0.180.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.180.0/examples/jsm/"}}
@@ -31,7 +30,8 @@
           <input id="loginPassword" type="password" autocomplete="current-password" placeholder="demo password">
         </label>
         <p id="loginError" class="login-error" aria-live="polite"></p>
-        <button id="loginSubmit" type="submit" class="proof-button">Sign in →</button>
+        <button id="loginSubmit" type="submit" class="proof-button" disabled>Sign in →</button>
+        <button id="retryConnection" type="button" class="proof-button">Retry connection</button>
       </form>
     </div>
   </div>
@@ -180,7 +180,6 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-  <script type="module" src="app.js?v=storage-latency-20260915"></script>
+  <script type="module" src="app.js?v=recovery-20260922"></script>
 </body>
 </html>

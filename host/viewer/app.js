@@ -1,7 +1,9 @@
-import * as THREE from 'three';
-import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {parse} from 'https://esm.sh/@loaders.gl/core@4.3.4';
-import {LASLoader} from 'https://esm.sh/@loaders.gl/las@4.3.4';
+// Optional rendering dependencies must never prevent the login code from running.
+let THREE, OrbitControls, parse, LASLoader;
+let lidarReady;
+let connectionTimer;
+let connecting = false;
+let connectionReady = false;
 
 const $ = (id) => document.getElementById(id);
 // ?role= is accepted only as a login-form prefill, never as auth
@@ -486,18 +488,19 @@ function showApp() {
 }
 
 async function doLogin() {
+  if (!connectionReady || $('loginSubmit').disabled) return;
   const role = $('loginRoleSelect').value;
   const password = $('loginPassword').value;
   $('loginError').textContent = '';
   $('loginSubmit').disabled = true;
   try {
-    const response = await fetch('/api/login', {
+    const {response, body} = await fetchBodyTimed('/api/login', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({role, password}),
       cache: 'no-store',
     });
-    const data = await response.json();
+    const data = JSON.parse(new TextDecoder().decode(body));
     if (response.status === 200) {
       state.token = data.token;
       state.role = data.role;
@@ -518,6 +521,7 @@ async function doLogin() {
       $('loginError').textContent = `Login failed (${response.status}).`;
     }
   } catch (err) {
+    showLogin();
     $('loginError').textContent = `Network error: ${err.message}`;
   } finally {
     $('loginSubmit').disabled = false;
@@ -525,16 +529,15 @@ async function doLogin() {
 }
 
 async function doLogout() {
-  if (state.token) {
-    try {
-      await fetch('/api/logout', {
-        method: 'POST',
-        headers: {'Authorization': `Bearer ${state.token}`},
-        cache: 'no-store',
-      });
-    } catch {}
-  }
+  const token = state.token;
   clearSession();
+  if (token) {
+      fetchBodyTimed('/api/logout', {
+        method: 'POST',
+        headers: {'Authorization': `Bearer ${token}`},
+        cache: 'no-store',
+      }).catch(() => {});
+  }
   state.trips = [];
   state.trip = null;
   state.access = {};
@@ -827,6 +830,9 @@ async function loadCameraClosest(generation) {
 }
 
 async function loadLidarClosest(generation) {
+  await lidarReady;
+  if (generation !== state.sensorGeneration) return;
+  if (!lidarView) throw new Error('LiDAR renderer unavailable. Check graphics/network access and reload.');
   $('lidarState').textContent = 'DECODING ON HOST';
   const {response, body} = await closest('lidar.top');
   if (generation !== state.sensorGeneration) return;
@@ -899,10 +905,13 @@ function drawTimeline() {
   const width = rect.width;
   const left = 112;
   const right = width - 24;
+  // Fit all three rows inside the canvas, including the compact desktop layout.
+  const firstRowY = 26;
+  const rowSpacing = (rect.height - firstRowY - 20) / 2;
   const rows = [
-    {resource: 'camera.front', label: 'CAMERA', y: 34, color: '#f4b763'},
-    {resource: 'lidar.top', label: 'LIDAR', y: 72, color: '#6a9cff'},
-    {resource: 'position', label: 'GPS', y: 110, color: '#51d9d1'},
+    {resource: 'camera.front', label: 'CAMERA', y: firstRowY, color: '#f4b763'},
+    {resource: 'lidar.top', label: 'LIDAR', y: firstRowY + rowSpacing, color: '#6a9cff'},
+    {resource: 'position', label: 'GPS', y: firstRowY + 2 * rowSpacing, color: '#51d9d1'},
   ];
   ctx.clearRect(0, 0, width, rect.height);
   ctx.font = '650 9px ui-monospace, monospace';
@@ -936,7 +945,7 @@ function drawTimeline() {
   if (state.trip && state.selectedNs) {
     const x = timeToX(state.selectedNs, left, right);
     ctx.strokeStyle = '#e9f0f2'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(x, 15); ctx.lineTo(x, 130); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, 15); ctx.lineTo(x, rect.height - 10); ctx.stroke();
     ctx.fillStyle = '#e9f0f2'; ctx.beginPath(); ctx.moveTo(x - 5, 13); ctx.lineTo(x + 5, 13); ctx.lineTo(x, 19); ctx.fill();
     ctx.font = '700 9px ui-monospace, monospace'; ctx.fillText('T', x + 7, 21);
   }
@@ -944,7 +953,7 @@ function drawTimeline() {
     ctx.strokeStyle = '#ff4545'; ctx.lineWidth = 2;
     for (const event of state.brakeEvents) {
       const x = timeToX(event.timestamp_ns, left, right);
-      ctx.beginPath(); ctx.moveTo(x, 15); ctx.lineTo(x, 130); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, 15); ctx.lineTo(x, rect.height - 10); ctx.stroke();
     }
   }
 }
@@ -986,6 +995,7 @@ function showToast(message, error = false) {
 }
 
 function bindEvents() {
+  $('retryConnection').addEventListener('click', connectVehicle);
   $('storageFilter').addEventListener('change', () => {
     renderTrips();
     const tier = $('storageFilter').value;
@@ -1001,17 +1011,20 @@ function bindEvents() {
   $('denialModal').addEventListener('click', (event) => { if (event.target === $('denialModal')) closeModal(); });
 }
 
-async function boot() {
-  initMap();
-  initLidar();
-  setupCameraView();
-  setupTimeline();
-  bindEvents();
+async function connectVehicle() {
+  if (connecting) return;
+  connecting = true;
+  connectionReady = false;
+  clearTimeout(connectionTimer);
+  $('loginSubmit').disabled = true;
+  $('retryConnection').disabled = true;
+  $('connectionLabel').textContent = 'Connecting to vehicle…';
   try {
     const health = await fetchJson('/api/health');
     if (health.decode_location !== 'host') throw new Error('Invalid deployment boundary: decoding must run on host');
     document.querySelector('.pulse').classList.add('ready');
     await loadRoles();
+    connectionReady = true;
 
     // Try to restore an existing session from sessionStorage
     const storedToken = sessionStorage.getItem('pdal_token');
@@ -1029,26 +1042,73 @@ async function boot() {
           await loadTrips();
           return;
         }
-      } catch {
-        // 401 already handled in trackedFetch (clearSession + showLogin called).
-        // For any other error, fall through to show the login form.
-        clearSession();
-        showLogin();
-        return;
+      } catch (error) {
+        // A temporary outage is not an expired session. Retry it on reconnect.
+        if (error.status !== 401) throw error;
       }
     }
 
     showLogin();
     $('connectionLabel').textContent = 'Awaiting login…';
   } catch (error) {
-    $('connectionLabel').textContent = 'Vehicle connection failed';
-    showToast(error.message, true);
+    connectionReady = false;
+    document.querySelector('.pulse').classList.remove('ready');
+    $('connectionLabel').textContent = 'Vehicle offline · retrying';
+    showLogin(`Cannot connect to the vehicle: ${error.message}. Retrying in 5 seconds.`);
+    connectionTimer = setTimeout(connectVehicle, 5000);
+  } finally {
+    connecting = false;
+    $('loginSubmit').disabled = !connectionReady;
+    $('retryConnection').disabled = false;
   }
 }
 
+async function loadVisuals() {
+  const style = document.createElement('link');
+  style.rel = 'stylesheet';
+  style.href = 'https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css';
+  document.head.appendChild(style);
+  const mapTask = (async () => {
+    await withDeadline(new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('Map library failed to load'));
+      document.head.appendChild(script);
+    }), 15000);
+    initMap();
+  })().catch(error => { $('gpsPosition').textContent = `Map unavailable: ${error.message}`; });
+  lidarReady = (async () => {
+    const modules = await withDeadline(Promise.all([
+      import('three'), import('three/addons/controls/OrbitControls.js'),
+      import('https://esm.sh/@loaders.gl/core@4.3.4'),
+      import('https://esm.sh/@loaders.gl/las@4.3.4'),
+    ]), 15000);
+    [THREE, {OrbitControls}, {parse}, {LASLoader}] = modules;
+    initLidar();
+  })().catch(error => { setSensorEmpty('lidar', 'Renderer unavailable', error.message); });
+  await Promise.allSettled([mapTask, lidarReady]);
+}
+
+async function withDeadline(promise, milliseconds) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Request timed out')), milliseconds);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+async function boot() {
+  bindEvents();
+  setupCameraView();
+  setupTimeline();
+  loadVisuals().catch(error => showToast(error.message, true));
+  await connectVehicle();
+}
 
 
-async function fetchBodyTimed(url, options) {
+async function fetchBodyTimed(url, options = {}) {
   const request = new URL(url, window.location.href);
   const isData = ['/api/history', '/api/closest'].includes(request.pathname);
   const generation = state.tripGeneration;
@@ -1058,12 +1118,21 @@ async function fetchBodyTimed(url, options) {
   const started = performance.now();
   let response;
   let complete = false;
+  const controller = new AbortController();
+  const cancel = () => controller.abort(options.signal.reason);
+  if (options.signal?.aborted) cancel();
+  else options.signal?.addEventListener('abort', cancel, {once: true});
+  const controlRequest = ['/api/health', '/api/roles', '/api/session', '/api/login', '/api/logout'].includes(request.pathname);
+  const timer = setTimeout(() => controller.abort(new Error('Request timed out; please retry')),
+    options.timeoutMs ?? (controlRequest ? 10000 : 65000));
   try {
-    response = await fetch(url, options);
+    response = await fetch(url, {...options, signal: controller.signal});
     const body = await response.arrayBuffer();
     complete = true;
     return {response, body};
   } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', cancel);
     const elapsed = performance.now() - started;
     if (isData && generation === state.tripGeneration && state.trip === trip && state.role === role) {
       const resource = request.searchParams.get('resource');
