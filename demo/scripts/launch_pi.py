@@ -2,6 +2,7 @@
 """Supervise the Pi gateway and a reconnecting, loopback-only SSH forward."""
 
 import argparse
+import ctypes
 import fcntl
 import json
 import os
@@ -27,17 +28,33 @@ def health():
         return data.get("status") == "ready" and data.get("decode_location") == "host"
 
 
-def stop_service(process):
+def child_setup():
+    """Close SSH / stop the service shell even if the launcher is killed."""
+    parent = os.getppid()
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:  # Linux PR_SET_PDEATHSIG
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_PDEATHSIG)")
+    if os.getppid() != parent or parent == 1:
+        os.kill(os.getpid(), signal.SIGTERM)
+
+
+def stop_service(process, timeout=10):
     if process is None:
         return
     # start_pi and its children have their own process group.
     try:
         os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=10)
+        process.wait(timeout=timeout)
     except ProcessLookupError:
         pass
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+        pass
+    finally:
+        # The group leader can exit before a stuck child. Always reap the group.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         process.wait()
 
 
@@ -61,8 +78,10 @@ def main():
     ssh = ["ssh", "-i", str(args.key), "-o", "IdentitiesOnly=yes",
            "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
            "-o", "ConnectTimeout=5", "-o", "ConnectionAttempts=1",
+           "-o", "ForkAfterAuthentication=no", "-o", "ControlPersist=no",
            "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"]
     service = None
+    tunnel = None
 
     def interrupt(_signum, _frame):
         raise KeyboardInterrupt
@@ -94,15 +113,27 @@ def main():
                     return False
 
             def tunnel_stop():
-                subprocess.run([*control, "-O", "exit", target],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               timeout=8)
+                nonlocal tunnel
+                stop_service(tunnel, timeout=3)
+                tunnel = None
+
+            def remote_health():
+                try:
+                    check = subprocess.run([
+                        *control, "-o", "ControlMaster=no", target,
+                        "curl", "--silent", "--show-error", "--fail", "--max-time", "5",
+                        f"http://127.0.0.1:{args.remote_port}/api/health",
+                    ], capture_output=True, text=True, timeout=10)
+                    return check.returncode == 0 and json.loads(check.stdout).get("status") == "ready"
+                except (ValueError, subprocess.TimeoutExpired):
+                    return False
 
             try:
                 env = {**os.environ, "DEMO_PI_ADDRESS": "127.0.0.1", "DEMO_PI_PORT": "8090"}
                 log("Starting pDAL and the Pi gateway (ports 8080 and 8090).")
                 service = subprocess.Popen([str(ROOT / "demo/scripts/start_pi.sh")],
-                                           cwd=ROOT, env=env, start_new_session=True)
+                                           cwd=ROOT, env=env, start_new_session=True,
+                                           preexec_fn=child_setup)
                 deadline = time.monotonic() + 180
                 while True:
                     if service.poll() is not None:
@@ -117,44 +148,63 @@ def main():
                     time.sleep(1)
 
                 connected = False
+                next_probe = 0
                 while service.poll() is None:
-                    if not tunnel_check():
+                    if tunnel is None or tunnel.poll() is not None:
                         if connected:
                             log("Host connection lost; reconnecting.")
                         connected = False
+                        tunnel_stop()
                         log(f"Connecting to {target} (SSH key authentication).")
-                        try:
-                            result = subprocess.run([
-                                *control, "-M", "-f", "-N", "-T",
+                        # Keep SSH in the foreground and own its PID/group. A
+                        # temporary multiplex socket is only used for probes.
+                        error_path = ROOT / "demo/pi/config/ssh-last-error.log"
+                        with open(error_path, "w") as errors:
+                            tunnel = subprocess.Popen([
+                                *control, "-M", "-N", "-T",
                                 "-o", "ExitOnForwardFailure=yes",
                                 "-R", f"127.0.0.1:{args.remote_port}:127.0.0.1:8090", target,
-                            ], timeout=20)
-                        except subprocess.TimeoutExpired:
-                            log("SSH connection timed out; retrying in 5 seconds.")
-                            time.sleep(5)
-                            continue
-                        if result.returncode != 0:
-                            log("SSH failed; retrying in 5 seconds. Check the key, network, and remote port.")
+                            ], stdin=subprocess.DEVNULL, stderr=errors,
+                                start_new_session=True, preexec_fn=child_setup)
+                        deadline = time.monotonic() + 20
+                        while tunnel.poll() is None and time.monotonic() < deadline:
+                            if tunnel_check():
+                                break
+                            time.sleep(.2)
+                        else:
+                            tunnel_stop()
+                            detail = error_path.read_text(errors="replace").strip()[-2000:]
+                            log(f"SSH failed: {detail or 'connection timed out'}")
+                            if "remote port forwarding failed" in detail:
+                                log(f"Host port {args.remote_port} is occupied or forwarding is denied. "
+                                    "Stop the previous Pi tunnel; the host viewer does not own this port.")
+                            log("Retrying in 5 seconds.")
                             time.sleep(5)
                             continue
                         # Verify an actual request from the host through the new tunnel.
-                        try:
-                            check = subprocess.run([
-                                *control, target, "curl", "--silent", "--show-error", "--fail",
-                                "--max-time", "5", f"http://127.0.0.1:{args.remote_port}/api/health",
-                            ], capture_output=True, text=True, timeout=10)
-                            ready = check.returncode == 0 and json.loads(check.stdout).get("status") == "ready"
-                        except (ValueError, subprocess.TimeoutExpired):
-                            ready = False
-                        if not ready:
+                        if not remote_health():
                             tunnel_stop()
                             log("Host could not read gateway health through the tunnel; retrying in 5 seconds.")
                             time.sleep(5)
                             continue
                         connected = True
+                        next_probe = time.monotonic() + 15
                         log(f"READY: host can retrieve Pi data at http://127.0.0.1:{args.remote_port}")
-                        log("On the host: cd /home/yuxw/demo && ./scripts/start_host.sh")
+                        log(f"On the host: cd /home/yuxw/demo && ./scripts/start_host.sh --pi-url http://127.0.0.1:{args.remote_port}")
                         log("Open http://127.0.0.1:8088 in the host browser. Keep this terminal open; Ctrl+C stops everything.")
+                    elif time.monotonic() >= next_probe:
+                        next_probe = time.monotonic() + 15
+                        if not remote_health():
+                            log("Gateway health through the host failed; checking the local gateway.")
+                            try:
+                                local_ready = health()
+                            except (OSError, ValueError):
+                                local_ready = False
+                            if local_ready:
+                                log("Local gateway is healthy; rebuilding the SSH tunnel.")
+                                tunnel_stop()
+                            else:
+                                log("Local gateway/pDAL is unhealthy; keeping SSH connected. See service output.")
                     time.sleep(5)
                 raise RuntimeError("Pi service stopped unexpectedly; see its output above")
             except KeyboardInterrupt:

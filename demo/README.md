@@ -172,3 +172,7 @@ those payloads must be decoded on the host, not on the Pi.
 Every host request crosses this Pi-side policy boundary. The presentation role
 picker is not a production identity provider; the policy enforcement and real
 HTTP denial occur on the Pi.
+
+For SSH tunnel recovery, launcher cleanup, and the corresponding host-side
+liveness configuration, see [RECOVERY.md](RECOVERY.md). Deploy the viewer update
+from the `host` branch alongside this launcher update.
