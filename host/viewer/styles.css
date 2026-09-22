@@ -52,6 +52,8 @@ select { min-width: 220px; background: #111e21; color: var(--ink); border: 1px s
 .field-label input { width: 100%; background: #0c1618; color: var(--ink); border: 1px solid #304348; border-radius: 8px; padding: 10px 12px; outline: none; font: inherit; }
 .field-label input:focus { border-color: var(--cyan); }
 .login-error { min-height: 18px; color: var(--red); font-size: 11px; margin: 0 0 14px; line-height: 1.4; }
+.login-actions { display: flex; flex-direction: column; gap: 12px; }
+.login-actions > button { width: 100%; }
 #loginSubmit { width: 100%; padding: 12px; font-size: 13px; margin-top: 2px; }
 #loginSubmit:disabled { opacity: .5; cursor: not-allowed; }
 /* Access matrix panel (sidebar) */

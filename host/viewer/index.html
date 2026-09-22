@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OEM Vehicle History · pDAL</title>
   <link rel="preconnect" href="https://tile.openstreetmap.org">
-  <link rel="stylesheet" href="styles.css?v=topdown-center">
+  <link rel="stylesheet" href="styles.css?v=login-spacing-20260922">
   <script type="importmap">
     {"imports":{"three":"https://unpkg.com/three@0.180.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.180.0/examples/jsm/"}}
   </script>
@@ -30,8 +30,10 @@
           <input id="loginPassword" type="password" autocomplete="current-password" placeholder="demo password">
         </label>
         <p id="loginError" class="login-error" aria-live="polite"></p>
-        <button id="loginSubmit" type="submit" class="proof-button" disabled>Sign in →</button>
-        <button id="retryConnection" type="button" class="proof-button">Retry connection</button>
+        <div class="login-actions">
+          <button id="loginSubmit" type="submit" class="proof-button" disabled>Sign in →</button>
+          <button id="retryConnection" type="button" class="proof-button">Retry connection</button>
+        </div>
       </form>
     </div>
   </div>
