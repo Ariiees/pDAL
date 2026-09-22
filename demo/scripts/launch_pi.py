@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Supervise the Pi gateway and a reconnecting, loopback-only SSH forward."""
+"""Supervise the Pi gateway with an SSH tunnel or direct Ethernet access."""
 
 import argparse
 import ctypes
@@ -60,6 +60,8 @@ def stop_service(process, timeout=10):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--direct", action="store_true",
+                        help="Serve the gateway on Ethernet/Wi-Fi port 8090 without an SSH tunnel")
     parser.add_argument("--host", default=os.environ.get("PDAL_SSH_HOST", "128.175.213.233"))
     parser.add_argument("--user", default=os.environ.get("PDAL_SSH_USER", "yuxw"))
     parser.add_argument("--key", type=Path, default=Path(os.environ.get(
@@ -67,11 +69,11 @@ def main():
     parser.add_argument("--remote-port", type=int,
                         default=int(os.environ.get("PDAL_REMOTE_PORT", "18090")))
     args = parser.parse_args()
-    if not 1024 <= args.remote_port <= 65535:
+    if not args.direct and not 1024 <= args.remote_port <= 65535:
         parser.error("--remote-port must be between 1024 and 65535")
-    if not args.key.is_file():
+    if not args.direct and not args.key.is_file():
         parser.error(f"SSH key not found: {args.key}; set --key to an authorized key")
-    if args.host.startswith("-") or args.user.startswith("-"):
+    if not args.direct and (args.host.startswith("-") or args.user.startswith("-")):
         parser.error("invalid SSH host or username")
 
     target = f"{args.user}@{args.host}"
@@ -129,7 +131,8 @@ def main():
                     return False
 
             try:
-                env = {**os.environ, "DEMO_PI_ADDRESS": "127.0.0.1", "DEMO_PI_PORT": "8090"}
+                env = {**os.environ, "DEMO_PI_ADDRESS": "0.0.0.0" if args.direct else "127.0.0.1",
+                       "DEMO_PI_PORT": "8090"}
                 log("Starting pDAL and the Pi gateway (ports 8080 and 8090).")
                 service = subprocess.Popen([str(ROOT / "demo/scripts/start_pi.sh")],
                                            cwd=ROOT, env=env, start_new_session=True,
@@ -146,6 +149,15 @@ def main():
                     if time.monotonic() >= deadline:
                         raise RuntimeError("Pi gateway did not become healthy within 180 seconds")
                     time.sleep(1)
+
+                if args.direct:
+                    log("READY: direct access on port 8090; no SSH tunnel is needed.")
+                    log("Find the Pi Ethernet IPv4 address with: ip -4 addr show eth0")
+                    log("On the host: ./scripts/start_host.sh --pi-ip <Pi-Ethernet-IP>")
+                    log("Open http://127.0.0.1:8088 in the host browser. Ctrl+C stops Pi services.")
+                    while service.poll() is None:
+                        time.sleep(1)
+                    raise RuntimeError("Pi service stopped unexpectedly; see its output above")
 
                 connected = False
                 next_probe = 0

@@ -176,3 +176,7 @@ HTTP denial occur on the Pi.
 For SSH tunnel recovery, launcher cleanup, and the corresponding host-side
 liveness configuration, see [RECOVERY.md](RECOVERY.md). Deploy the viewer update
 from the `host` branch alongside this launcher update.
+
+For Ethernet access without 5G or SSH, use `./pDAL.sh --direct`, then
+`./scripts/start_host.sh --pi-ip <Pi-IP>` on the host. With no flags the existing
+tunnel behavior is unchanged. See [ETHERNET.md](ETHERNET.md).
