@@ -139,3 +139,7 @@ After updating the gateway, restart Pi pDAL and hard-refresh the host browser.
 For browser refresh, offline startup, and reverse-tunnel recovery, see
 [RECOVERY.md](RECOVERY.md), including the host SSH liveness setup and regression
 tests. Deploy the corresponding launcher update from the `pDAL` branch.
+
+For a direct Ethernet backup, use `./scripts/start_host.sh --pi-ip <Pi-IP>`
+and `./pDAL.sh --direct` on the Pi. The IP option is optional; without it the
+host uses the existing tunnel. See [ETHERNET.md](ETHERNET.md) for setup.

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import signal
@@ -151,20 +152,39 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
-def main() -> int:
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="pDAL OEM host viewer")
     parser.add_argument("--address", default=os.environ.get("DEMO_HOST_ADDRESS", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("DEMO_HOST_PORT", "8088")))
-    parser.add_argument("--pi-url", default=os.environ.get("PI_URL", "http://128.175.213.254:8090"))
+    connection = parser.add_mutually_exclusive_group()
+    connection.add_argument("--pi-url", help="Full Pi gateway URL (default: PI_URL or http://127.0.0.1:18090)")
+    connection.add_argument("--pi-ip", type=ipaddress.ip_address,
+                            help="Optional Pi Ethernet IP; connects directly to port 8090")
+    parser.add_argument("--pi-port", type=int, help="Override the direct Pi port (requires --pi-ip)")
     parser.add_argument("--pi-key", default=os.environ.get("PI_GATEWAY_KEY", ""),
                         help="Gateway key (PI_GATEWAY_KEY). Added as X-Demo-Key on every proxied /api/* request.")
     parser.add_argument("--control-timeout", type=float, default=5,
                         help="Pi health/login socket timeout in seconds")
     parser.add_argument("--request-timeout", type=float, default=60,
                         help="Pi data socket timeout in seconds")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.pi_port is not None:
+        if args.pi_ip is None:
+            parser.error("--pi-port requires --pi-ip")
+        if not 1 <= args.pi_port <= 65535:
+            parser.error("--pi-port must be between 1 and 65535")
+    if args.pi_ip is not None:
+        host = f"[{args.pi_ip}]" if args.pi_ip.version == 6 else str(args.pi_ip)
+        args.pi_url = f"http://{host}:{args.pi_port or 8090}"
+    elif args.pi_url is None:
+        args.pi_url = os.environ.get("PI_URL") or "http://127.0.0.1:18090"
     if args.control_timeout <= 0 or args.request_timeout <= 0:
         parser.error("timeouts must be positive")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
     root = Path(__file__).resolve().parent / "viewer"
     os.chdir(root)
     server = ThreadingHTTPServer((args.address, args.port), ViewerHandler)
